@@ -44,6 +44,7 @@ public class GameStateService
 
         LastAiShot = response.AiShot;
         LastAiShotResult = response.AiShotResult;
+        AppendMoves(response);
 
         var playerMessage = $"Player shot: ({response.PlayerShot.X},{response.PlayerShot.Y}) {response.PlayerShotResult}";
         var aiMessage = response.AiShot is Coordinates aiShot
@@ -147,6 +148,34 @@ public class GameStateService
     private void NotifyStateChanged()
     {
         StateChanged?.Invoke();
+    }
+
+    private void AppendMoves(AttackResponseDto response)
+    {
+        var updatedMoves = Moves.ToList();
+        var nextNumber = updatedMoves.Count == 0 ? 1 : updatedMoves[^1].MoveNumber + 1;
+        updatedMoves.Add(new MoveHistoryEntry
+        {
+            MoveNumber = nextNumber,
+            Player = PlayerType.Human,
+            Target = response.PlayerShot,
+            Result = response.PlayerShotResult,
+            PlayedAt = DateTime.UtcNow
+        });
+
+        if (response.AiShot is Coordinates aiShot && response.AiShotResult is ShotResult aiResult)
+        {
+            updatedMoves.Add(new MoveHistoryEntry
+            {
+                MoveNumber = nextNumber + 1,
+                Player = PlayerType.AI,
+                Target = aiShot,
+                Result = aiResult,
+                PlayedAt = DateTime.UtcNow
+            });
+        }
+
+        Moves = updatedMoves;
     }
 }
 

@@ -1,4 +1,5 @@
 @inject GameStateService GameState
+@implements IDisposable
 
 <section class="board">
     <header>
@@ -55,6 +56,21 @@
     [Parameter] public string Title { get; set; } = string.Empty;
     [Parameter] public bool IsPlayerGrid { get; set; }
     [Parameter] public EventCallback<(int x, int y)> OnCellClicked { get; set; }
+
+    private void HandleStateChanged()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    protected override void OnInitialized()
+    {
+        GameState.StateChanged += HandleStateChanged;
+    }
+
+    public void Dispose()
+    {
+        GameState.StateChanged -= HandleStateChanged;
+    }
 
     private async Task HandleCellClick(int x, int y)
     {

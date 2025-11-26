@@ -1,3 +1,4 @@
+using System;
 using BattleShip.Models.Game;
 using Microsoft.AspNetCore.SignalR.Client;
 

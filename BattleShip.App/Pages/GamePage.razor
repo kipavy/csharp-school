@@ -22,9 +22,7 @@ else
 
     <div class="actions">
         <button @onclick="UndoAsync" disabled="@isBusy">Undo</button>
-        <button @onclick="RefreshAsync" disabled="@isBusy">Refresh</button>
         <button @onclick="RestartAsync" disabled="@isBusy">Restart</button>
-        <button @onclick="LoadHistoryAsync" disabled="@isBusy">Load history</button>
     </div>
 
     <HistoryList />

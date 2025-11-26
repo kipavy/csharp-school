@@ -1,4 +1,5 @@
 @inject GameStateService GameState
+@implements IDisposable
 
 <section class="history-panel">
     <h3>History</h3>
@@ -33,4 +34,21 @@
         </table>
     }
 </section>
+
+@code {
+    protected override void OnInitialized()
+    {
+        GameState.StateChanged += OnStateChanged;
+    }
+
+    private void OnStateChanged()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        GameState.StateChanged -= OnStateChanged;
+    }
+}
 
