@@ -1,7 +1,11 @@
 ﻿@page "/"
+@inject BattleShip.App.State.GameState GameState
 
 <PageTitle>Home</PageTitle>
 
 <h1>Hello, world!</h1>
 
 Welcome to your new app.
+
+<h3>Debug GameState</h3>
+<p>Grid size: @GameState.GridSize x @GameState.GridSize</p>
