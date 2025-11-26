@@ -10,6 +10,8 @@ public class GameStateService
     public string[][] PlayerGrid { get; private set; } = Array.Empty<string[]>();
     public CellShotState[][] OpponentGrid { get; private set; } = Array.Empty<CellShotState[]>();
     public IList<MoveHistoryEntry> Moves { get; private set; } = new List<MoveHistoryEntry>();
+    public Coordinates? LastAiShot { get; private set; }
+    public ShotResult? LastAiShotResult { get; private set; }
     public bool IsMultiplayer { get; private set; }
     public bool IsPlayerTurn { get; private set; } = true;
     public string? LastMessage { get; private set; }
@@ -30,8 +32,24 @@ public class GameStateService
 
     public void UpdateFromAttack(AttackResponseDto response)
     {
-        ApplyState(response.GameState);
-        LastMessage = $"Player shot: ({response.PlayerShot.X},{response.PlayerShot.Y}) {response.PlayerShotResult}";
+        if (response.GameState is GameStateDto updatedState)
+        {
+            ApplyState(updatedState);
+        }
+
+        if (response.AiShot is Coordinates aiShotUpdate)
+        {
+            PlayerGrid = ApplyAiShot(PlayerGrid, aiShotUpdate, response.AiShotResult);
+        }
+
+        LastAiShot = response.AiShot;
+        LastAiShotResult = response.AiShotResult;
+
+        var playerMessage = $"Player shot: ({response.PlayerShot.X},{response.PlayerShot.Y}) {response.PlayerShotResult}";
+        var aiMessage = response.AiShot is Coordinates aiShot
+            ? $"AI shot: ({aiShot.X},{aiShot.Y}) {response.AiShotResult?.ToString() ?? "Miss"}"
+            : "AI did not play.";
+        LastMessage = $"{playerMessage} | {aiMessage}";
         if (response.Status != GameStatus.InProgress)
         {
             LastMessage = response.Status.ToString();
@@ -88,7 +106,7 @@ public class GameStateService
         OpponentGrid = CloneOpponentGrid(state.OpponentGrid.Cells);
     }
 
-    private static string[][] ClonePlayerGrid(string[][] source)
+    private static string[][] ClonePlayerGrid(string[][]? source)
     {
         if (source is null || source.Length == 0)
         {
@@ -98,7 +116,25 @@ public class GameStateService
         return source.Select(row => row.ToArray()).ToArray();
     }
 
-    private static CellShotState[][] CloneOpponentGrid(CellShotState[][] source)
+    private static string[][] ApplyAiShot(string[][] current, Coordinates shot, ShotResult? result)
+    {
+        var clone = ClonePlayerGrid(current);
+        if (clone.Length == 0 || shot.Y < 0 || shot.Y >= clone.Length)
+        {
+            return clone;
+        }
+
+        var row = clone[shot.Y];
+        if (row.Length == 0 || shot.X < 0 || shot.X >= row.Length)
+        {
+            return clone;
+        }
+
+        row[shot.X] = result == ShotResult.Hit ? "X" : "O";
+        return clone;
+    }
+
+    private static CellShotState[][] CloneOpponentGrid(CellShotState[][]? source)
     {
         if (source is null || source.Length == 0)
         {

@@ -5,6 +5,7 @@ using BattleShip.API.Hubs;
 using BattleShip.API.Validation;
 using BattleShip.Models.Game;
 using FluentValidation;
+using Grpc.AspNetCore.Web;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -39,8 +40,11 @@ if (app.Environment.IsDevelopment())
 
 app.UseRouting();
 app.UseCors("Frontend");
+app.UseGrpcWeb(new GrpcWebOptions { DefaultEnabled = true });
 app.MapGameEndpoints();
-app.MapGrpcService<BattleShipGrpcService>();
+app.MapGrpcService<BattleShipGrpcService>()
+    .EnableGrpcWeb()
+    .RequireCors("Frontend");
 app.MapHub<GameHub>("/hubs/game");
 
 app.Run();

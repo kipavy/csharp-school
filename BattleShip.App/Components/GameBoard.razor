@@ -10,13 +10,15 @@
             <div class="grid-row" role="row">
                 @for (var x = 0; x < GameState.GridSize; x++)
                 {
-                    <button class="@GetCellClass(x, y)"
+                    var cellX = x;
+                    var cellY = y;
+                    <button class="@GetCellClass(cellX, cellY)"
                             role="gridcell"
-                            disabled="@IsCellDisabled(x, y)"
-                            @onclick="() => HandleCellClick(x, y)">
+                            disabled="@IsCellDisabled(cellX, cellY)"
+                            @onclick="() => HandleCellClick(cellX, cellY)">
                         @if (IsPlayerGrid)
                         {
-                            var value = GetPlayerCellValue(x, y);
+                            var value = GetPlayerCellValue(cellX, cellY);
                             if (value == "X")
                             {
                                 <img src="images/hit.png" alt="Hit" />
@@ -32,7 +34,7 @@
                         }
                         else
                         {
-                            var state = GetOpponentCellState(x, y);
+                            var state = GetOpponentCellState(cellX, cellY);
                             if (state == CellShotState.Hit)
                             {
                                 <img src="images/hit.png" alt="Hit" />
@@ -64,22 +66,12 @@
 
     private string GetPlayerCellValue(int x, int y)
     {
-        if (GameState.PlayerGrid.Length == 0)
-        {
-            return string.Empty;
-        }
-
-        return GameState.PlayerGrid[y][x];
+        return TryGetPlayerCell(x, y, out var value) ? value : string.Empty;
     }
 
     private CellShotState GetOpponentCellState(int x, int y)
     {
-        if (GameState.OpponentGrid.Length == 0)
-        {
-            return CellShotState.Unknown;
-        }
-
-        return GameState.OpponentGrid[y][x];
+        return TryGetOpponentCell(x, y, out var state) ? state : CellShotState.Unknown;
     }
 
     private bool IsCellDisabled(int x, int y)
@@ -94,9 +86,14 @@
             return true;
         }
 
-        if (GameState.OpponentGrid.Length == 0)
+        CellShotState cell;
+        if (!TryGetOpponentCell(x, y, out var existingCell))
         {
-            return true;
+            cell = CellShotState.Unknown;
+        }
+        else
+        {
+            cell = existingCell;
         }
 
         if (GameState.IsMultiplayer && !GameState.IsPlayerTurn)
@@ -104,7 +101,7 @@
             return true;
         }
 
-        return GameState.OpponentGrid[y][x] != CellShotState.Unknown;
+        return cell != CellShotState.Unknown;
     }
 
     private string GetCellClass(int x, int y)
@@ -113,9 +110,8 @@
         if (IsPlayerGrid)
         {
             classes.Add("player");
-            if (GameState.PlayerGrid.Length > 0)
+            if (TryGetPlayerCell(x, y, out var value))
             {
-                var value = GameState.PlayerGrid[y][x];
                 if (value == "X")
                 {
                     classes.Add("hit");
@@ -133,9 +129,8 @@
         else
         {
             classes.Add("opponent");
-            if (GameState.OpponentGrid.Length > 0)
+            if (TryGetOpponentCell(x, y, out var state))
             {
-                var state = GameState.OpponentGrid[y][x];
                 if (state == CellShotState.Hit)
                 {
                     classes.Add("hit");
@@ -153,6 +148,42 @@
         }
 
         return string.Join(" ", classes);
+    }
+
+    private bool TryGetPlayerCell(int x, int y, out string value)
+    {
+        value = string.Empty;
+        if (GameState.PlayerGrid.Length == 0 || y < 0 || y >= GameState.PlayerGrid.Length)
+        {
+            return false;
+        }
+
+        var row = GameState.PlayerGrid[y];
+        if (row.Length == 0 || x < 0 || x >= row.Length)
+        {
+            return false;
+        }
+
+        value = row[x];
+        return true;
+    }
+
+    private bool TryGetOpponentCell(int x, int y, out CellShotState value)
+    {
+        value = CellShotState.Unknown;
+        if (GameState.OpponentGrid.Length == 0 || y < 0 || y >= GameState.OpponentGrid.Length)
+        {
+            return false;
+        }
+
+        var row = GameState.OpponentGrid[y];
+        if (row.Length == 0 || x < 0 || x >= row.Length)
+        {
+            return false;
+        }
+
+        value = row[x];
+        return true;
     }
 }
 
