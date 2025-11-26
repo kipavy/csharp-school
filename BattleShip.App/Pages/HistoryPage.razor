@@ -1,0 +1,53 @@
+@page "/history"
+@inject GameStateService GameState
+@inject GameApiClient ApiClient
+
+<PageTitle>History</PageTitle>
+
+<h2>History</h2>
+
+@if (GameState.GameId is null)
+{
+    <p>No active game. <NavLink href="/">Start a game first.</NavLink></p>
+}
+else
+{
+    <button @onclick="LoadHistoryAsync" disabled="@isBusy">Refresh history</button>
+    <HistoryList />
+}
+
+@code {
+    private bool isBusy;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (GameState.GameId is not null && GameState.Moves.Count == 0)
+        {
+            await LoadHistoryAsync();
+        }
+    }
+
+    private async Task LoadHistoryAsync()
+    {
+        if (GameState.GameId is null)
+        {
+            return;
+        }
+
+        isBusy = true;
+        try
+        {
+            var history = await ApiClient.GetHistoryAsync(GameState.GameId.Value);
+            GameState.SetHistory(history);
+        }
+        catch (Exception ex)
+        {
+            GameState.SetErrorMessage(ex.Message);
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+}
+

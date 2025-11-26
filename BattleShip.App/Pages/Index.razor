@@ -1,0 +1,216 @@
+@page "/"
+@inject GameApiClient ApiClient
+@inject GameStateService GameState
+@inject GameHubClient HubClient
+@inject NavigationManager Navigation
+
+<PageTitle>BattleShip</PageTitle>
+
+<section class="hero">
+    <div>
+        <h2>Start a new game</h2>
+        <p>Configure the battlefield and pick your mode.</p>
+    </div>
+</section>
+
+<EditForm Model="form" OnValidSubmit="StartGameAsync">
+    <DataAnnotationsValidator />
+    <div class="form-grid">
+        <label>
+            Grid size
+            <InputNumber @bind-Value="form.GridSize" min="6" max="14" />
+        </label>
+        <label class="checkbox">
+            <InputCheckbox @bind-Value="form.RandomizeShips" />
+            Randomize my fleet
+        </label>
+        <label class="checkbox">
+            <InputCheckbox @bind-Value="form.IsMultiplayer" />
+            Multiplayer mode
+        </label>
+    </div>
+
+    @if (!form.RandomizeShips)
+    {
+        <div class="placement-editor">
+            <h3>Manual placement</h3>
+            <p>Provide coordinates for each ship.</p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Ship</th>
+                        <th>X</th>
+                        <th>Y</th>
+                        <th>Horizontal</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var ship in placements)
+                    {
+                        <tr>
+                            <td>@ship.ShipCode (@ship.Size)</td>
+                            <td><InputNumber @bind-Value="ship.X" /></td>
+                            <td><InputNumber @bind-Value="ship.Y" /></td>
+                            <td class="center"><InputCheckbox @bind-Value="ship.Horizontal" /></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+
+    <button disabled="@isBusy" type="submit">Start game</button>
+</EditForm>
+
+<section class="join-panel">
+    <h3>Join existing game</h3>
+    <div class="join-form">
+        <input placeholder="Game Id" @bind="existingGameId" />
+        <button type="button" @onclick="JoinExistingGameAsync" disabled="@isBusy">Join</button>
+    </div>
+    <label class="checkbox">
+        <InputCheckbox @bind-Value="joinAsMultiplayer" />
+        Subscribe with SignalR
+    </label>
+</section>
+
+@if (!string.IsNullOrWhiteSpace(errorMessage))
+{
+    <p class="error-text">@errorMessage</p>
+}
+
+@code {
+    private StartGameFormModel form = new();
+    private bool isBusy;
+    private string? errorMessage;
+    private string? existingGameId;
+    private bool joinAsMultiplayer = true;
+    private List<ShipPlacementInput> placements = new();
+
+    protected override void OnInitialized()
+    {
+        placements = ShipDefinitions.Default
+            .Select(def => new ShipPlacementInput(def.Code, def.Size))
+            .ToList();
+    }
+
+    private async Task StartGameAsync()
+    {
+        if (isBusy)
+        {
+            return;
+        }
+
+        errorMessage = null;
+        isBusy = true;
+
+        try
+        {
+            IList<ShipPlacement>? manualPlacements = null;
+            if (!form.RandomizeShips)
+            {
+                manualPlacements = placements
+                    .Select(p => new ShipPlacement(p.ShipCode, new Coordinates(p.X, p.Y), p.Horizontal))
+                    .ToList();
+            }
+
+            var request = new StartGameRequestDto(form.GridSize, form.RandomizeShips, manualPlacements);
+            var response = await ApiClient.StartGameAsync(request);
+            GameState.InitializeFromStart(response, form.IsMultiplayer);
+            GameState.SetStatusMessage("Game ready.");
+
+            if (form.IsMultiplayer)
+            {
+                await HubClient.JoinGameAsync(response.GameId);
+                GameState.SetMultiplayerMode(true);
+            }
+            else
+            {
+                GameState.SetMultiplayerMode(false);
+            }
+
+            Navigation.NavigateTo("/game");
+        }
+        catch (Exception ex)
+        {
+            errorMessage = ex.Message;
+            GameState.SetErrorMessage(ex.Message);
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private async Task JoinExistingGameAsync()
+    {
+        if (string.IsNullOrWhiteSpace(existingGameId))
+        {
+            return;
+        }
+
+        if (!Guid.TryParse(existingGameId, out var gameId))
+        {
+            errorMessage = "Invalid game identifier.";
+            return;
+        }
+
+        errorMessage = null;
+        isBusy = true;
+
+        try
+        {
+            var state = await ApiClient.GetStateAsync(gameId);
+            GameState.UpdateFromState(state);
+            GameState.SetMultiplayerTurn(true);
+            GameState.SetStatusMessage("Game synchronized.");
+
+            if (joinAsMultiplayer)
+            {
+                GameState.SetMultiplayerMode(true);
+                await HubClient.JoinGameAsync(gameId);
+            }
+            else
+            {
+                GameState.SetMultiplayerMode(false);
+            }
+
+            Navigation.NavigateTo("/game");
+        }
+        catch (Exception ex)
+        {
+            errorMessage = ex.Message;
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private sealed class StartGameFormModel
+    {
+        [Range(6, 14)]
+        public int GridSize { get; set; } = 10;
+
+        public bool RandomizeShips { get; set; } = true;
+
+        public bool IsMultiplayer { get; set; }
+    }
+
+    private sealed class ShipPlacementInput
+    {
+        public ShipPlacementInput(char shipCode, int size)
+        {
+            ShipCode = shipCode;
+            Size = size;
+            Horizontal = true;
+        }
+
+        public char ShipCode { get; }
+        public int Size { get; }
+        public int X { get; set; }
+        public int Y { get; set; }
+        public bool Horizontal { get; set; }
+    }
+}
+

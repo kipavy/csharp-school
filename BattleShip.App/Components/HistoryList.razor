@@ -1,0 +1,36 @@
+@inject GameStateService GameState
+
+<section class="history-panel">
+    <h3>History</h3>
+    @if (GameState.Moves.Count == 0)
+    {
+        <p>No moves yet.</p>
+    }
+    else
+    {
+        <table>
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Player</th>
+                    <th>Target</th>
+                    <th>Result</th>
+                    <th>Time</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var move in GameState.Moves.OrderBy(m => m.MoveNumber))
+                {
+                    <tr>
+                        <td>@move.MoveNumber</td>
+                        <td>@move.Player</td>
+                        <td>(@move.Target.X,@move.Target.Y)</td>
+                        <td>@move.Result</td>
+                        <td>@move.PlayedAt.ToLocalTime().ToString("HH:mm:ss")</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</section>
+

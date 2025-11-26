@@ -1,0 +1,214 @@
+@page "/placement"
+@inject GameApiClient ApiClient
+@inject GameStateService GameState
+@inject GameHubClient HubClient
+@inject NavigationManager Navigation
+
+<PageTitle>Ship Placement</PageTitle>
+
+<h2>Ship placement</h2>
+
+<div class="placement-controls">
+    <label>
+        Grid size
+        <InputNumber @bind-Value="gridSize" min="6" max="14" />
+    </label>
+    <label class="checkbox">
+        <InputCheckbox @bind-Value="horizontal" />
+        Horizontal
+    </label>
+    <button type="button" @onclick="ClearAll">Clear grid</button>
+</div>
+
+<div class="ship-selector">
+    @foreach (var ship in shipDefinitions)
+    {
+        <button type="button"
+                class="@(selectedShip == ship.Code ? "selected" : string.Empty)"
+                @onclick="() => SelectShip(ship.Code)">
+            @ship.Code (@ship.Size)
+        </button>
+    }
+</div>
+
+<div class="placement-grid">
+    @for (var y = 0; y < gridSize; y++)
+    {
+        <div class="grid-row">
+            @for (var x = 0; x < gridSize; x++)
+            {
+                <button class="grid-cell @(placementGrid[y][x])"
+                        @onclick="() => HandleCellClick(x, y)">
+                    @placementGrid[y][x]
+                </button>
+            }
+        </div>
+    }
+</div>
+
+<button type="button" @onclick="StartManualGame" disabled="@isBusy">Start game</button>
+
+@if (!string.IsNullOrWhiteSpace(errorMessage))
+{
+    <p class="error-text">@errorMessage</p>
+}
+
+@code {
+    private readonly IReadOnlyList<ShipDefinition> shipDefinitions = ShipDefinitions.Default;
+    private readonly Dictionary<char, ShipPlacement> placements = new();
+    private int gridSizeValue = 10;
+    private bool horizontal = true;
+    private char selectedShip;
+    private string? errorMessage;
+    private bool isBusy;
+    private string[][] placementGrid = Array.Empty<string[]>();
+
+    private int gridSize
+    {
+        get => gridSizeValue;
+        set
+        {
+            var sanitized = Math.Clamp(value, 6, 14);
+            if (gridSizeValue == sanitized)
+            {
+                return;
+            }
+
+            gridSizeValue = sanitized;
+            placements.Clear();
+            BuildGrid();
+        }
+    }
+
+    protected override void OnInitialized()
+    {
+        selectedShip = shipDefinitions.First().Code;
+        BuildGrid();
+    }
+
+    private void BuildGrid()
+    {
+        placementGrid = Enumerable.Range(0, gridSizeValue)
+            .Select(_ => Enumerable.Repeat(string.Empty, gridSizeValue).ToArray())
+            .ToArray();
+
+        foreach (var placement in placements.Values)
+        {
+            ApplyPlacementToGrid(placement);
+        }
+    }
+
+    private void ApplyPlacementToGrid(ShipPlacement placement)
+    {
+        for (var i = 0; i < shipDefinitions.First(s => s.Code == placement.ShipCode).Size; i++)
+        {
+            var x = placement.Horizontal ? placement.Start.X + i : placement.Start.X;
+            var y = placement.Horizontal ? placement.Start.Y : placement.Start.Y + i;
+            if (y < placementGrid.Length && x < placementGrid[y].Length)
+            {
+                placementGrid[y][x] = placement.ShipCode.ToString();
+            }
+        }
+    }
+
+    private void SelectShip(char code)
+    {
+        selectedShip = code;
+    }
+
+    private void ClearAll()
+    {
+        placements.Clear();
+        BuildGrid();
+    }
+
+    private void HandleCellClick(int x, int y)
+    {
+        errorMessage = null;
+        var definition = shipDefinitions.First(s => s.Code == selectedShip);
+
+        if (horizontal && x + definition.Size > gridSizeValue)
+        {
+            errorMessage = "Ship exceeds grid width.";
+            return;
+        }
+
+        if (!horizontal && y + definition.Size > gridSizeValue)
+        {
+            errorMessage = "Ship exceeds grid height.";
+            return;
+        }
+
+        if (placements.TryGetValue(selectedShip, out var existing))
+        {
+            RemovePlacement(existing);
+        }
+
+        for (var i = 0; i < definition.Size; i++)
+        {
+            var targetX = horizontal ? x + i : x;
+            var targetY = horizontal ? y : y + i;
+            if (!string.IsNullOrWhiteSpace(placementGrid[targetY][targetX]))
+            {
+                errorMessage = "Cells already occupied.";
+                if (existing is not null)
+                {
+                    ApplyPlacementToGrid(existing);
+                }
+
+                return;
+            }
+        }
+
+        var placement = new ShipPlacement(selectedShip, new Coordinates(x, y), horizontal);
+        placements[selectedShip] = placement;
+        ApplyPlacementToGrid(placement);
+    }
+
+    private void RemovePlacement(ShipPlacement placement)
+    {
+        var definition = shipDefinitions.First(s => s.Code == placement.ShipCode);
+        for (var i = 0; i < definition.Size; i++)
+        {
+            var x = placement.Horizontal ? placement.Start.X + i : placement.Start.X;
+            var y = placement.Horizontal ? placement.Start.Y : placement.Start.Y + i;
+            placementGrid[y][x] = string.Empty;
+        }
+    }
+
+    private async Task StartManualGame()
+    {
+        if (isBusy)
+        {
+            return;
+        }
+
+        var missingShips = shipDefinitions.Where(s => !placements.ContainsKey(s.Code)).ToList();
+        if (missingShips.Count > 0)
+        {
+            errorMessage = $"Place all ships ({string.Join(", ", missingShips.Select(s => s.Code))}).";
+            return;
+        }
+
+        isBusy = true;
+        errorMessage = null;
+
+        try
+        {
+            var request = new StartGameRequestDto(gridSizeValue, false, placements.Values.ToList());
+            var response = await ApiClient.StartGameAsync(request);
+            GameState.InitializeFromStart(response, false);
+            GameState.SetMultiplayerMode(false);
+            Navigation.NavigateTo("/game");
+        }
+        catch (Exception ex)
+        {
+            errorMessage = ex.Message;
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+}
+

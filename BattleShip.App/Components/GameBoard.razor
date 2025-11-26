@@ -1,0 +1,158 @@
+@inject GameStateService GameState
+
+<section class="board">
+    <header>
+        <h3>@Title</h3>
+    </header>
+    <div class="grid" role="grid" aria-label="@Title">
+        @for (var y = 0; y < GameState.GridSize; y++)
+        {
+            <div class="grid-row" role="row">
+                @for (var x = 0; x < GameState.GridSize; x++)
+                {
+                    <button class="@GetCellClass(x, y)"
+                            role="gridcell"
+                            disabled="@IsCellDisabled(x, y)"
+                            @onclick="() => HandleCellClick(x, y)">
+                        @if (IsPlayerGrid)
+                        {
+                            var value = GetPlayerCellValue(x, y);
+                            if (value == "X")
+                            {
+                                <img src="images/hit.png" alt="Hit" />
+                            }
+                            else if (value == "O")
+                            {
+                                <img src="images/miss.png" alt="Miss" />
+                            }
+                            else if (!string.IsNullOrWhiteSpace(value))
+                            {
+                                <img src="@($"images/ships/ship{value}.png")" alt="Ship" />
+                            }
+                        }
+                        else
+                        {
+                            var state = GetOpponentCellState(x, y);
+                            if (state == CellShotState.Hit)
+                            {
+                                <img src="images/hit.png" alt="Hit" />
+                            }
+                            else if (state == CellShotState.Miss)
+                            {
+                                <img src="images/miss.png" alt="Miss" />
+                            }
+                        }
+                    </button>
+                }
+            </div>
+        }
+    </div>
+</section>
+
+@code {
+    [Parameter] public string Title { get; set; } = string.Empty;
+    [Parameter] public bool IsPlayerGrid { get; set; }
+    [Parameter] public EventCallback<(int x, int y)> OnCellClicked { get; set; }
+
+    private async Task HandleCellClick(int x, int y)
+    {
+        if (OnCellClicked.HasDelegate && !IsCellDisabled(x, y))
+        {
+            await OnCellClicked.InvokeAsync((x, y));
+        }
+    }
+
+    private string GetPlayerCellValue(int x, int y)
+    {
+        if (GameState.PlayerGrid.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        return GameState.PlayerGrid[y][x];
+    }
+
+    private CellShotState GetOpponentCellState(int x, int y)
+    {
+        if (GameState.OpponentGrid.Length == 0)
+        {
+            return CellShotState.Unknown;
+        }
+
+        return GameState.OpponentGrid[y][x];
+    }
+
+    private bool IsCellDisabled(int x, int y)
+    {
+        if (GameState.Status != GameStatus.InProgress)
+        {
+            return true;
+        }
+
+        if (IsPlayerGrid)
+        {
+            return true;
+        }
+
+        if (GameState.OpponentGrid.Length == 0)
+        {
+            return true;
+        }
+
+        if (GameState.IsMultiplayer && !GameState.IsPlayerTurn)
+        {
+            return true;
+        }
+
+        return GameState.OpponentGrid[y][x] != CellShotState.Unknown;
+    }
+
+    private string GetCellClass(int x, int y)
+    {
+        var classes = new List<string> { "grid-cell" };
+        if (IsPlayerGrid)
+        {
+            classes.Add("player");
+            if (GameState.PlayerGrid.Length > 0)
+            {
+                var value = GameState.PlayerGrid[y][x];
+                if (value == "X")
+                {
+                    classes.Add("hit");
+                }
+                else if (value == "O")
+                {
+                    classes.Add("miss");
+                }
+                else if (!string.IsNullOrWhiteSpace(value))
+                {
+                    classes.Add("ship");
+                }
+            }
+        }
+        else
+        {
+            classes.Add("opponent");
+            if (GameState.OpponentGrid.Length > 0)
+            {
+                var state = GameState.OpponentGrid[y][x];
+                if (state == CellShotState.Hit)
+                {
+                    classes.Add("hit");
+                }
+                else if (state == CellShotState.Miss)
+                {
+                    classes.Add("miss");
+                }
+            }
+        }
+
+        if (!IsCellDisabled(x, y))
+        {
+            classes.Add("clickable");
+        }
+
+        return string.Join(" ", classes);
+    }
+}
+

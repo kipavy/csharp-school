@@ -1,0 +1,178 @@
+@page "/game"
+@inject GameStateService GameState
+@inject GameApiClient ApiClient
+@inject GameGrpcClient GrpcClient
+@inject GameHubClient HubClient
+@implements IDisposable
+
+<PageTitle>Game</PageTitle>
+
+@if (GameState.GameId is null)
+{
+    <p>No active game. <NavLink href="/">Start a new game</NavLink>.</p>
+}
+else
+{
+    <GameStatusPanel />
+
+    <div class="boards">
+        <GameBoard Title="Your Fleet" IsPlayerGrid="true" />
+        <GameBoard Title="Enemy Waters" OnCellClicked="HandleOpponentCellClicked" />
+    </div>
+
+    <div class="actions">
+        <button @onclick="UndoAsync" disabled="@isBusy">Undo</button>
+        <button @onclick="RefreshAsync" disabled="@isBusy">Refresh</button>
+        <button @onclick="RestartAsync" disabled="@isBusy">Restart</button>
+        <button @onclick="LoadHistoryAsync" disabled="@isBusy">Load history</button>
+    </div>
+
+    <HistoryList />
+}
+
+@code {
+    private bool isBusy;
+
+    protected override void OnInitialized()
+    {
+        GameState.StateChanged += OnStateChanged;
+    }
+
+    private void OnStateChanged()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        GameState.StateChanged -= OnStateChanged;
+    }
+
+    private async Task HandleOpponentCellClicked((int x, int y) position)
+    {
+        if (GameState.GameId is null || isBusy)
+        {
+            return;
+        }
+
+        try
+        {
+            if (GameState.IsMultiplayer)
+            {
+                await HubClient.ShootAsync(GameState.GameId.Value, position.x, position.y);
+                GameState.SetStatusMessage($"Shot sent ({position.x},{position.y}).");
+            }
+            else
+            {
+                isBusy = true;
+                var response = await GrpcClient.AttackAsync(GameState.GameId.Value, position.x, position.y);
+                GameState.UpdateFromAttack(response);
+            }
+        }
+        catch (Exception ex)
+        {
+            GameState.SetErrorMessage(ex.Message);
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private async Task UndoAsync()
+    {
+        if (GameState.GameId is null)
+        {
+            return;
+        }
+
+        isBusy = true;
+        try
+        {
+            var state = await ApiClient.UndoAsync(GameState.GameId.Value);
+            GameState.UpdateFromState(state);
+        }
+        catch (Exception ex)
+        {
+            GameState.SetErrorMessage(ex.Message);
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private async Task RefreshAsync()
+    {
+        if (GameState.GameId is null)
+        {
+            return;
+        }
+
+        isBusy = true;
+        try
+        {
+            var state = await ApiClient.GetStateAsync(GameState.GameId.Value);
+            GameState.UpdateFromState(state);
+        }
+        catch (Exception ex)
+        {
+            GameState.SetErrorMessage(ex.Message);
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private async Task RestartAsync()
+    {
+        if (GameState.GameId is null)
+        {
+            return;
+        }
+
+        isBusy = true;
+        try
+        {
+            var response = await ApiClient.RestartAsync(GameState.GameId.Value);
+            GameState.InitializeFromStart(response, GameState.IsMultiplayer);
+            if (GameState.IsMultiplayer)
+            {
+                await HubClient.JoinGameAsync(response.GameId);
+            }
+        }
+        catch (Exception ex)
+        {
+            GameState.SetErrorMessage(ex.Message);
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private async Task LoadHistoryAsync()
+    {
+        if (GameState.GameId is null)
+        {
+            return;
+        }
+
+        isBusy = true;
+        try
+        {
+            var history = await ApiClient.GetHistoryAsync(GameState.GameId.Value);
+            GameState.SetHistory(history);
+        }
+        catch (Exception ex)
+        {
+            GameState.SetErrorMessage(ex.Message);
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+}
+

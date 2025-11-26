@@ -1,0 +1,36 @@
+@inject GameStateService GameState
+
+<section class="status-panel">
+    <div class="status-header">
+        <h2>Game Status</h2>
+        @if (GameState.GameId is not null)
+        {
+            <span class="badge">@GameState.Status</span>
+        }
+    </div>
+
+    <dl>
+        <dt>Game Id</dt>
+        <dd>@(GameState.GameId?.ToString() ?? "N/A")</dd>
+        <dt>Grid Size</dt>
+        <dd>@GameState.GridSize</dd>
+        <dt>Mode</dt>
+        <dd>@(GameState.IsMultiplayer ? "Multiplayer" : "Solo")</dd>
+        @if (GameState.IsMultiplayer)
+        {
+            <dt>Turn</dt>
+            <dd>@(GameState.IsPlayerTurn ? "Your turn" : "Opponent turn")</dd>
+        }
+    </dl>
+
+    @if (!string.IsNullOrWhiteSpace(GameState.LastMessage))
+    {
+        <p class="info-text">@GameState.LastMessage</p>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(GameState.ErrorMessage))
+    {
+        <p class="error-text">@GameState.ErrorMessage</p>
+    }
+</section>
+
