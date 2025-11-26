@@ -26,3 +26,10 @@ public enum PlayerType
     AI
 }
 
+public enum PlayerSlot
+{
+    None,
+    PlayerOne,
+    PlayerTwo
+}
+

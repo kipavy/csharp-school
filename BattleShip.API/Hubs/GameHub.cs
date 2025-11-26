@@ -13,22 +13,52 @@ public class GameHub : Hub
         _gameService = gameService;
     }
 
-    public Task JoinGame(Guid gameId)
+    public async Task JoinGame(Guid gameId)
     {
-        return Groups.AddToGroupAsync(Context.ConnectionId, gameId.ToString());
+        try
+        {
+            var slot = _gameService.RegisterPlayer(gameId, Context.ConnectionId);
+            await Groups.AddToGroupAsync(Context.ConnectionId, gameId.ToString());
+            var state = _gameService.GetState(gameId, slot);
+            await Clients.Caller.SendAsync("OnGameStarted", state);
+
+            var otherSlot = slot == PlayerSlot.PlayerOne ? PlayerSlot.PlayerTwo : PlayerSlot.PlayerOne;
+            if (_gameService.TryGetConnection(gameId, otherSlot, out var otherConnection) && !string.IsNullOrWhiteSpace(otherConnection))
+            {
+                var otherState = _gameService.GetState(gameId, otherSlot);
+                await Clients.Client(otherConnection).SendAsync("OnGameStarted", otherState);
+            }
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or KeyNotFoundException)
+        {
+            throw new HubException(ex.Message);
+        }
     }
 
     public async Task Shoot(Guid gameId, int x, int y)
     {
         try
         {
-            var result = _gameService.Attack(new AttackRequestDto(gameId, x, y));
-            await Clients.Group(gameId.ToString()).SendAsync("OnShotResolved", result);
+            var slot = _gameService.GetPlayerSlot(gameId, Context.ConnectionId);
+            var responses = _gameService.AttackMultiplayer(gameId, slot, new Coordinates(x, y));
+            foreach (var response in responses)
+            {
+                if (_gameService.TryGetConnection(gameId, response.Key, out var connectionId) && !string.IsNullOrWhiteSpace(connectionId))
+                {
+                    await Clients.Client(connectionId).SendAsync("OnShotResolved", response.Value);
+                }
+            }
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or KeyNotFoundException)
         {
             throw new HubException(ex.Message);
         }
+    }
+
+    public override Task OnDisconnectedAsync(Exception? exception)
+    {
+        _gameService.UnregisterPlayer(Context.ConnectionId);
+        return base.OnDisconnectedAsync(exception);
     }
 }
 

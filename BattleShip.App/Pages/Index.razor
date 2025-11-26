@@ -114,19 +114,17 @@
                     .ToList();
             }
 
-            var request = new StartGameRequestDto(form.GridSize, form.RandomizeShips, manualPlacements);
+            var request = new StartGameRequestDto(form.GridSize, form.RandomizeShips, manualPlacements, form.IsMultiplayer);
             var response = await ApiClient.StartGameAsync(request);
             GameState.InitializeFromStart(response, form.IsMultiplayer);
-            GameState.SetStatusMessage("Game ready.");
+            var initialMessage = form.IsMultiplayer && !response.InitialState.IsPlayerTurn
+                ? "Waiting for opponent..."
+                : "Game ready.";
+            GameState.SetStatusMessage(initialMessage);
 
             if (form.IsMultiplayer)
             {
                 await HubClient.JoinGameAsync(response.GameId);
-                GameState.SetMultiplayerMode(true);
-            }
-            else
-            {
-                GameState.SetMultiplayerMode(false);
             }
 
             Navigation.NavigateTo("/game");
@@ -162,17 +160,14 @@
         {
             var state = await ApiClient.GetStateAsync(gameId);
             GameState.UpdateFromState(state);
-            GameState.SetMultiplayerTurn(true);
-            GameState.SetStatusMessage("Game synchronized.");
+            var joinMessage = joinAsMultiplayer && !state.IsPlayerTurn
+                ? "Waiting for opponent..."
+                : "Game synchronized.";
+            GameState.SetStatusMessage(joinMessage);
 
             if (joinAsMultiplayer)
             {
-                GameState.SetMultiplayerMode(true);
                 await HubClient.JoinGameAsync(gameId);
-            }
-            else
-            {
-                GameState.SetMultiplayerMode(false);
             }
 
             Navigation.NavigateTo("/game");

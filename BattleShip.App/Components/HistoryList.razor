@@ -24,7 +24,7 @@
                 {
                     <tr>
                         <td>@move.MoveNumber</td>
-                        <td>@move.Player</td>
+                        <td>@GetPlayerLabel(move)</td>
                         <td>(@move.Target.X,@move.Target.Y)</td>
                         <td>@move.Result</td>
                         <td>@move.PlayedAt.ToLocalTime().ToString("HH:mm:ss")</td>
@@ -49,6 +49,17 @@
     public void Dispose()
     {
         GameState.StateChanged -= OnStateChanged;
+    }
+
+    private string GetPlayerLabel(MoveHistoryEntry move)
+    {
+        if (!GameState.IsMultiplayer)
+        {
+            return move.Player.ToString();
+        }
+
+        var isLocalMove = move.Slot == GameState.PlayerRole;
+        return isLocalMove ? "You" : "Opponent";
     }
 }
 

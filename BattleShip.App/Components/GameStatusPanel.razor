@@ -18,6 +18,8 @@
         <dd>@(GameState.IsMultiplayer ? "Multiplayer" : "Solo")</dd>
         @if (GameState.IsMultiplayer)
         {
+            <dt>Role</dt>
+            <dd>@(GameState.PlayerRole == PlayerSlot.PlayerOne ? "Player One" : "Player Two")</dd>
             <dt>Turn</dt>
             <dd>@(GameState.IsPlayerTurn ? "Your turn" : "Opponent turn")</dd>
         }

@@ -21,7 +21,7 @@ else
     </div>
 
     <div class="actions">
-        <button @onclick="UndoAsync" disabled="@isBusy">Undo</button>
+        <button @onclick="UndoAsync" disabled="@(isBusy || GameState.IsMultiplayer)">Undo</button>
         <button @onclick="RestartAsync" disabled="@isBusy">Restart</button>
     </div>
 

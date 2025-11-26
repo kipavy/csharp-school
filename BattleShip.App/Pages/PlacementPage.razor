@@ -195,10 +195,9 @@
 
         try
         {
-            var request = new StartGameRequestDto(gridSizeValue, false, placements.Values.ToList());
+            var request = new StartGameRequestDto(gridSizeValue, false, placements.Values.ToList(), false);
             var response = await ApiClient.StartGameAsync(request);
             GameState.InitializeFromStart(response, false);
-            GameState.SetMultiplayerMode(false);
             Navigation.NavigateTo("/game");
         }
         catch (Exception ex)

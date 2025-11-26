@@ -46,7 +46,6 @@ public class GameHubClient : IAsyncDisposable
     public async Task ShootAsync(Guid gameId, int x, int y)
     {
         await EnsureConnectedAsync();
-        _gameState.SetMultiplayerTurn(false);
         await _connection!.InvokeAsync("Shoot", gameId, x, y);
     }
 
@@ -63,13 +62,11 @@ public class GameHubClient : IAsyncDisposable
         connection.On<GameStateDto>("OnGameStarted", state =>
         {
             _gameState.UpdateFromState(state);
-            _gameState.SetMultiplayerTurn(true);
         });
 
         connection.On<AttackResponseDto>("OnShotResolved", response =>
         {
             _gameState.UpdateFromAttack(response);
-            _gameState.SetMultiplayerTurn(true);
         });
 
         connection.On<GameStateDto>("OnGameEnded", state =>

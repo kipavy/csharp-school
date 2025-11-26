@@ -1,3 +1,4 @@
+using System.Linq;
 using BattleShip.Models.Game;
 
 namespace BattleShip.App.Services;
@@ -14,6 +15,7 @@ public class GameStateService
     public ShotResult? LastAiShotResult { get; private set; }
     public bool IsMultiplayer { get; private set; }
     public bool IsPlayerTurn { get; private set; } = true;
+    public PlayerSlot PlayerRole { get; private set; } = PlayerSlot.PlayerOne;
     public string? LastMessage { get; private set; }
     public string? ErrorMessage { get; private set; }
     public event Action? StateChanged;
@@ -23,8 +25,9 @@ public class GameStateService
         GameId = response.GameId;
         ApplyState(response.InitialState);
         Moves = new List<MoveHistoryEntry>();
-        IsMultiplayer = isMultiplayer;
-        IsPlayerTurn = true;
+        IsMultiplayer = response.InitialState.IsMultiplayer || isMultiplayer;
+        IsPlayerTurn = response.InitialState.IsPlayerTurn;
+        PlayerRole = response.InitialState.Perspective;
         LastMessage = null;
         ErrorMessage = null;
         NotifyStateChanged();
@@ -37,27 +40,19 @@ public class GameStateService
             ApplyState(updatedState);
         }
 
-        if (response.AiShot is Coordinates aiShotUpdate)
+        if (!response.GameState.IsMultiplayer && response.AiShot is Coordinates aiShotUpdate)
         {
             PlayerGrid = ApplyAiShot(PlayerGrid, aiShotUpdate, response.AiShotResult);
         }
 
-        LastAiShot = response.AiShot;
-        LastAiShotResult = response.AiShotResult;
+        var isMultiplayer = response.GameState?.IsMultiplayer == true;
+        LastAiShot = isMultiplayer ? null : response.AiShot;
+        LastAiShotResult = isMultiplayer ? null : response.AiShotResult;
         AppendMoves(response);
-
-        var playerMessage = $"Player shot: ({response.PlayerShot.X},{response.PlayerShot.Y}) {response.PlayerShotResult}";
-        var aiMessage = response.AiShot is Coordinates aiShot
-            ? $"AI shot: ({aiShot.X},{aiShot.Y}) {response.AiShotResult?.ToString() ?? "Miss"}"
-            : "AI did not play.";
-        LastMessage = $"{playerMessage} | {aiMessage}";
+        LastMessage = BuildMessage(response);
         if (response.Status != GameStatus.InProgress)
         {
             LastMessage = response.Status.ToString();
-        }
-        if (IsMultiplayer && response.Status == GameStatus.InProgress)
-        {
-            IsPlayerTurn = !IsPlayerTurn;
         }
         NotifyStateChanged();
     }
@@ -86,18 +81,6 @@ public class GameStateService
         NotifyStateChanged();
     }
 
-    public void SetMultiplayerMode(bool isMultiplayer)
-    {
-        IsMultiplayer = isMultiplayer;
-        NotifyStateChanged();
-    }
-
-    public void SetMultiplayerTurn(bool isPlayerTurn)
-    {
-        IsPlayerTurn = isPlayerTurn;
-        NotifyStateChanged();
-    }
-
     private void ApplyState(GameStateDto state)
     {
         GameId = state.GameId;
@@ -105,6 +88,9 @@ public class GameStateService
         GridSize = state.GridSize;
         PlayerGrid = ClonePlayerGrid(state.PlayerGrid.Cells);
         OpponentGrid = CloneOpponentGrid(state.OpponentGrid.Cells);
+        IsMultiplayer = state.IsMultiplayer;
+        PlayerRole = state.Perspective;
+        IsPlayerTurn = state.IsPlayerTurn;
     }
 
     private static string[][] ClonePlayerGrid(string[][]? source)
@@ -154,10 +140,27 @@ public class GameStateService
     {
         var updatedMoves = Moves.ToList();
         var nextNumber = updatedMoves.Count == 0 ? 1 : updatedMoves[^1].MoveNumber + 1;
+        var isMultiplayer = response.GameState?.IsMultiplayer == true;
+        if (isMultiplayer)
+        {
+            updatedMoves.Add(new MoveHistoryEntry
+            {
+                MoveNumber = nextNumber,
+                Player = response.ActingPlayer == PlayerSlot.PlayerTwo ? PlayerType.AI : PlayerType.Human,
+                Slot = response.ActingPlayer,
+                Target = response.PlayerShot,
+                Result = response.PlayerShotResult,
+                PlayedAt = DateTime.UtcNow
+            });
+            Moves = updatedMoves;
+            return;
+        }
+
         updatedMoves.Add(new MoveHistoryEntry
         {
             MoveNumber = nextNumber,
             Player = PlayerType.Human,
+            Slot = PlayerSlot.PlayerOne,
             Target = response.PlayerShot,
             Result = response.PlayerShotResult,
             PlayedAt = DateTime.UtcNow
@@ -169,6 +172,7 @@ public class GameStateService
             {
                 MoveNumber = nextNumber + 1,
                 Player = PlayerType.AI,
+                Slot = PlayerSlot.PlayerTwo,
                 Target = aiShot,
                 Result = aiResult,
                 PlayedAt = DateTime.UtcNow
@@ -176,6 +180,23 @@ public class GameStateService
         }
 
         Moves = updatedMoves;
+    }
+
+    private string BuildMessage(AttackResponseDto response)
+    {
+        var isMultiplayer = response.GameState?.IsMultiplayer == true;
+        if (!isMultiplayer)
+        {
+            var playerMessage = $"Player shot: ({response.PlayerShot.X},{response.PlayerShot.Y}) {response.PlayerShotResult}";
+            var aiMessage = response.AiShot is Coordinates aiShot
+                ? $"AI shot: ({aiShot.X},{aiShot.Y}) {response.AiShotResult?.ToString() ?? "Miss"}"
+                : "AI did not play.";
+            return $"{playerMessage} | {aiMessage}";
+        }
+
+        var actorIsLocal = response.ActingPlayer == PlayerRole;
+        var actorLabel = actorIsLocal ? "You" : "Opponent";
+        return $"{actorLabel} shot: ({response.PlayerShot.X},{response.PlayerShot.Y}) {response.PlayerShotResult}";
     }
 }
 

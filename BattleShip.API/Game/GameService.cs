@@ -10,6 +10,7 @@ public class GameService : IGameService
     private readonly ConcurrentDictionary<Guid, Models.Game.Game> _games = new();
     private readonly Dictionary<string, PlayerStats> _leaderboard = new();
     private readonly object _leaderboardLock = new();
+    private readonly ConcurrentDictionary<string, (Guid GameId, PlayerSlot Slot)> _connectionIndex = new();
     private const string DefaultPlayerId = "local-player";
 
     public Models.Game.Game StartNewGame(StartGameRequestDto request)
@@ -32,16 +33,20 @@ public class GameService : IGameService
         var aiGrid = CreateGrid(gridSize);
         PlaceShipsRandomly(aiGrid, definitions);
         var opponentView = new bool?[gridSize, gridSize];
+        var playerTwoView = new bool?[gridSize, gridSize];
         var queue = BuildAiQueue(gridSize);
-        var configuration = new GameConfiguration(gridSize, request.RandomizePlayerShips, request.RandomizePlayerShips ? null : playerPlacements.ToList());
+        var configuration = new GameConfiguration(gridSize, request.RandomizePlayerShips, request.RandomizePlayerShips ? null : playerPlacements.ToList(), request.IsMultiplayer);
         var game = new Models.Game.Game
         {
             GridSize = gridSize,
             PlayerGrid = playerGrid,
             AiGrid = aiGrid,
             OpponentView = opponentView,
+            PlayerTwoView = playerTwoView,
             AiMovesQueue = queue,
-            Configuration = configuration
+            Configuration = configuration,
+            IsMultiplayer = request.IsMultiplayer,
+            CurrentTurn = PlayerSlot.PlayerOne
         };
         _games[game.Id] = game;
         return game;
@@ -66,13 +71,19 @@ public class GameService : IGameService
             if (!HasRemainingShips(game.PlayerGrid)) FinalizeGame(game, GameStatus.AIWon);
         }
         var state = BuildState(game);
-        return new AttackResponseDto(game.Id, game.Status, playerShot, playerResult, aiShot, aiResult, state);
+        return new AttackResponseDto(game.Id, game.Status, playerShot, playerResult, aiShot, aiResult, state, PlayerSlot.PlayerOne);
     }
 
     public GameStateDto GetState(Guid gameId)
     {
         var game = GetGame(gameId);
         return BuildState(game);
+    }
+
+    public GameStateDto GetState(Guid gameId, PlayerSlot perspective)
+    {
+        var game = GetGame(gameId);
+        return BuildState(game, perspective);
     }
 
     public GameHistoryDto GetHistory(Guid gameId)
@@ -82,6 +93,7 @@ public class GameService : IGameService
         {
             MoveNumber = entry.MoveNumber,
             Player = entry.Player,
+            Slot = entry.Slot,
             Target = entry.Target,
             Result = entry.Result,
             PlayedAt = entry.PlayedAt
@@ -92,6 +104,7 @@ public class GameService : IGameService
     public GameStateDto UndoLastMove(Guid gameId)
     {
         var game = GetGame(gameId);
+        if (game.IsMultiplayer) throw new InvalidOperationException("Undo is not available for multiplayer games.");
         if (game.History.Count == 0 || game.Snapshots.Count == 0) throw new InvalidOperationException("No moves can be undone.");
         if (game.LeaderboardRecorded)
         {
@@ -110,9 +123,124 @@ public class GameService : IGameService
         var game = GetGame(gameId);
         var config = game.Configuration;
         _games.TryRemove(gameId, out _);
-        var request = new StartGameRequestDto(config.GridSize, config.RandomizePlayerShips, config.RandomizePlayerShips ? null : config.PlayerShips?.Select(p => new ShipPlacement(p.ShipCode, new Coordinates(p.Start.X, p.Start.Y), p.Horizontal)).ToList());
+        var request = new StartGameRequestDto(config.GridSize, config.RandomizePlayerShips, config.RandomizePlayerShips ? null : config.PlayerShips?.Select(p => new ShipPlacement(p.ShipCode, new Coordinates(p.Start.X, p.Start.Y), p.Horizontal)).ToList(), config.IsMultiplayer);
         var newGame = StartNewGame(request);
         return BuildState(newGame);
+    }
+
+    public PlayerSlot RegisterPlayer(Guid gameId, string connectionId)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(connectionId);
+        var game = GetGame(gameId);
+        if (!game.IsMultiplayer) throw new InvalidOperationException("Game is not multiplayer.");
+        if (_connectionIndex.TryGetValue(connectionId, out var existing))
+        {
+            if (existing.GameId == gameId)
+            {
+                return existing.Slot;
+            }
+
+            if (_games.TryGetValue(existing.GameId, out var previousGame))
+            {
+                previousGame.PlayerConnections.Remove(existing.Slot);
+            }
+            _connectionIndex.TryRemove(connectionId, out _);
+        }
+
+        PlayerSlot slot;
+        if (!game.PlayerConnections.ContainsKey(PlayerSlot.PlayerOne))
+        {
+            slot = PlayerSlot.PlayerOne;
+        }
+        else if (!game.PlayerConnections.ContainsKey(PlayerSlot.PlayerTwo))
+        {
+            slot = PlayerSlot.PlayerTwo;
+        }
+        else
+        {
+            throw new InvalidOperationException("Game already has two players.");
+        }
+
+        game.PlayerConnections[slot] = connectionId;
+        _connectionIndex[connectionId] = (gameId, slot);
+        return slot;
+    }
+
+    public void UnregisterPlayer(string connectionId)
+    {
+        if (string.IsNullOrWhiteSpace(connectionId))
+        {
+            return;
+        }
+
+        if (!_connectionIndex.TryRemove(connectionId, out var entry))
+        {
+            return;
+        }
+
+        if (_games.TryGetValue(entry.GameId, out var game))
+        {
+            game.PlayerConnections.Remove(entry.Slot);
+        }
+    }
+
+    public PlayerSlot GetPlayerSlot(Guid gameId, string connectionId)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(connectionId);
+        if (!_connectionIndex.TryGetValue(connectionId, out var entry) || entry.GameId != gameId)
+        {
+            throw new InvalidOperationException("Connection is not registered for this game.");
+        }
+
+        return entry.Slot;
+    }
+
+    public bool TryGetConnection(Guid gameId, PlayerSlot slot, out string? connectionId)
+    {
+        connectionId = null;
+        if (!_games.TryGetValue(gameId, out var game))
+        {
+            return false;
+        }
+
+        return game.PlayerConnections.TryGetValue(slot, out connectionId);
+    }
+
+    public IDictionary<PlayerSlot, AttackResponseDto> AttackMultiplayer(Guid gameId, PlayerSlot shooter, Coordinates target)
+    {
+        var game = GetGame(gameId);
+        if (!game.IsMultiplayer) throw new InvalidOperationException("Game is not multiplayer.");
+        if (game.Status != GameStatus.InProgress) throw new InvalidOperationException("Game has already finished.");
+        if (shooter == PlayerSlot.None) throw new ArgumentException("Invalid shooter.");
+        EnsureCoordinates(game, target.X, target.Y);
+        if (game.CurrentTurn != shooter) throw new InvalidOperationException("Not your turn.");
+        var playerShot = new Coordinates(target.X, target.Y);
+        var playerResult = shooter == PlayerSlot.PlayerOne
+            ? ApplyShot(game, PlayerType.Human, playerShot)
+            : ApplyShot(game, PlayerType.AI, playerShot, updateSecondView: true);
+        if (shooter == PlayerSlot.PlayerOne && !HasRemainingShips(game.AiGrid))
+        {
+            FinalizeGame(game, GameStatus.PlayerWon);
+        }
+        else if (shooter == PlayerSlot.PlayerTwo && !HasRemainingShips(game.PlayerGrid))
+        {
+            FinalizeGame(game, GameStatus.AIWon);
+        }
+
+        if (game.Status == GameStatus.InProgress)
+        {
+            game.CurrentTurn = shooter == PlayerSlot.PlayerOne ? PlayerSlot.PlayerTwo : PlayerSlot.PlayerOne;
+        }
+
+        var stateForP1 = BuildState(game, PlayerSlot.PlayerOne);
+        var stateForP2 = BuildState(game, PlayerSlot.PlayerTwo);
+        var responseForP1 = new AttackResponseDto(game.Id, game.Status, playerShot, playerResult, null, null, stateForP1, shooter);
+        var responseForP2 = new AttackResponseDto(game.Id, game.Status, playerShot, playerResult, null, null, stateForP2, shooter);
+        return new Dictionary<PlayerSlot, AttackResponseDto>
+        {
+            [PlayerSlot.PlayerOne] = responseForP1,
+            [PlayerSlot.PlayerTwo] = responseForP2
+        };
     }
 
     public LeaderboardDto GetLeaderboard()
@@ -259,7 +387,7 @@ public class GameService : IGameService
         if (x < 0 || y < 0 || x >= game.GridSize || y >= game.GridSize) throw new ArgumentException("Coordinates are outside of the grid.");
     }
 
-    private static ShotResult ApplyShot(Models.Game.Game game, PlayerType shooter, Coordinates target)
+    private static ShotResult ApplyShot(Models.Game.Game game, PlayerType shooter, Coordinates target, bool updateSecondView = false)
     {
         var grid = shooter == PlayerType.Human ? game.AiGrid : game.PlayerGrid;
         var current = grid[target.Y, target.X];
@@ -267,6 +395,7 @@ public class GameService : IGameService
         var result = current == '\0' ? ShotResult.Miss : ShotResult.Hit;
         grid[target.Y, target.X] = result == ShotResult.Hit ? 'X' : 'O';
         if (shooter == PlayerType.Human) game.OpponentView[target.Y, target.X] = result == ShotResult.Hit;
+        if (updateSecondView) game.PlayerTwoView[target.Y, target.X] = result == ShotResult.Hit;
         var snapshot = new GridSnapshot(shooter, target, current, shooter == PlayerType.Human);
         game.Snapshots.Push(snapshot);
         game.MoveCounter++;
@@ -274,6 +403,7 @@ public class GameService : IGameService
         {
             MoveNumber = game.MoveCounter,
             Player = shooter,
+            Slot = shooter == PlayerType.Human ? PlayerSlot.PlayerOne : PlayerSlot.PlayerTwo,
             Target = target,
             Result = result,
             PlayedAt = DateTime.UtcNow
@@ -359,9 +489,20 @@ public class GameService : IGameService
 
     private GameStateDto BuildState(Models.Game.Game game)
     {
-        var playerGrid = BuildPlayerGridDto(game.PlayerGrid, game.GridSize);
-        var opponentGrid = BuildOpponentGridDto(game.OpponentView, game.GridSize);
-        return new GameStateDto(game.Id, game.Status, game.GridSize, playerGrid, opponentGrid);
+        return BuildState(game, PlayerSlot.PlayerOne);
+    }
+
+    private GameStateDto BuildState(Models.Game.Game game, PlayerSlot perspective)
+    {
+        var playerGrid = perspective == PlayerSlot.PlayerOne
+            ? BuildPlayerGridDto(game.PlayerGrid, game.GridSize)
+            : BuildPlayerGridDto(game.AiGrid, game.GridSize);
+        var opponentGrid = perspective == PlayerSlot.PlayerOne
+            ? BuildOpponentGridDto(game.OpponentView, game.GridSize)
+            : BuildOpponentGridDto(game.PlayerTwoView, game.GridSize);
+        var playersReady = !game.IsMultiplayer || game.PlayerConnections.Count >= 2;
+        var isPlayerTurn = playersReady && game.CurrentTurn == perspective;
+        return new GameStateDto(game.Id, game.Status, game.GridSize, playerGrid, opponentGrid, game.IsMultiplayer, perspective, isPlayerTurn);
     }
 
     private static PlayerGridDto BuildPlayerGridDto(char[,] grid, int size)

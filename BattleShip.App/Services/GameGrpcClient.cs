@@ -56,7 +56,8 @@ public class GameGrpcClient
             playerResult,
             aiShot,
             aiResult,
-            state);
+            state,
+            PlayerSlot.PlayerOne);
     }
 }
 
