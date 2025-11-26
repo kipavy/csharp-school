@@ -1,0 +1,521 @@
+openapi: 3.0.3
+info:
+  title: BattleShip API
+  version: 1.0.0
+  description: >
+    REST API for the BattleShip project.
+    Covers game lifecycle, shots, history, leaderboard and multiplayer helpers.
+
+servers:
+  - url: https://localhost:5001
+    description: Local HTTPS
+  - url: http://localhost:5000
+    description: Local HTTP
+
+paths:
+  /api/games:
+    post:
+      summary: Start a new game
+      operationId: startGame
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartGameRequest'
+      responses:
+        '201':
+          description: Game created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StartGameResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/games/{gameId}:
+    get:
+      summary: Retrieve the state of a game
+      operationId: getGameState
+      parameters:
+        - name: gameId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Current game state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GameState'
+        '404':
+          description: Game not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/games/{gameId}/attack:
+    post:
+      summary: Play a turn (player shot + AI response)
+      operationId: attack
+      parameters:
+        - name: gameId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Must match the identifier provided in the body.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AttackRequest'
+      responses:
+        '200':
+          description: Result of both shots
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttackResponse'
+        '400':
+          description: >
+            Invalid request (out-of-range coordinates, finished game, already targeted cell, etc.)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Game not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/games/{gameId}/history:
+    get:
+      summary: Retrieve the move history of a game
+      operationId: getGameHistory
+      parameters:
+        - name: gameId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Move history
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GameHistory'
+        '404':
+          description: Game not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/games/{gameId}/undo:
+    post:
+      summary: Undo the latest pair of moves
+      operationId: undoLastMove
+      parameters:
+        - name: gameId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Updated state after undo
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GameState'
+        '400':
+          description: Nothing to undo or invalid state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Game not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/games/{gameId}/restart:
+    post:
+      summary: Restart a new game with the same parameters
+      operationId: restartGame
+      parameters:
+        - name: gameId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '201':
+          description: New game created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StartGameResponse'
+        '404':
+          description: Game not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/leaderboard:
+    get:
+      summary: Retrieve the leaderboard
+      operationId: getLeaderboard
+      responses:
+        '200':
+          description: Player rankings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Leaderboard'
+
+components:
+  schemas:
+
+    # --- Primitive types & enums ---
+
+    Coordinates:
+      type: object
+      properties:
+        x:
+          type: integer
+          format: int32
+          minimum: 0
+        y:
+          type: integer
+          format: int32
+          minimum: 0
+      required:
+        - x
+        - y
+
+    GameStatus:
+      type: string
+      description: Status of a game
+      enum:
+        - InProgress
+        - PlayerWon
+        - AIWon
+
+    CellShotState:
+      type: string
+      description: State of a cell on the opponent grid as seen by the player
+      enum:
+        - Unknown
+        - Hit
+        - Miss
+
+    ShotResult:
+      type: string
+      description: Outcome of a shot
+      enum:
+        - Hit
+        - Miss
+
+    PlayerType:
+      type: string
+      description: Used when showing the move history
+      enum:
+        - Human
+        - AI
+
+    # --- Grids & game state ---
+
+    PlayerGrid:
+      type: object
+      description: Player grid with ships and hits.
+      properties:
+        cells:
+          type: array
+          description: >
+            2D array [row][column]; each entry is:
+            "A".."F" for ships, "X" when hit, "O" when missed, "" when empty.
+          items:
+            type: array
+            items:
+              type: string
+              maxLength: 1
+      required:
+        - cells
+
+    OpponentGrid:
+      type: object
+      description: Opponent grid as visible to the player.
+      properties:
+        cells:
+          type: array
+          description: >
+            2D array [row][column]; each entry reflects the shot state
+            for that cell (Unknown, Hit, Miss).
+          items:
+            type: array
+            items:
+              $ref: '#/components/schemas/CellShotState'
+      required:
+        - cells
+
+    GameState:
+      type: object
+      description: Complete state of a game suitable for rendering.
+      properties:
+        gameId:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/GameStatus'
+        gridSize:
+          type: integer
+          format: int32
+        playerGrid:
+          $ref: '#/components/schemas/PlayerGrid'
+        opponentGrid:
+          $ref: '#/components/schemas/OpponentGrid'
+      required:
+        - gameId
+        - status
+        - gridSize
+        - playerGrid
+        - opponentGrid
+
+    # --- Game creation ---
+
+    ShipPlacement:
+      type: object
+      description: Manual placement for a ship.
+      properties:
+        shipCode:
+          type: string
+          description: Ship letter (A..F).
+          minLength: 1
+          maxLength: 1
+        start:
+          $ref: '#/components/schemas/Coordinates'
+        horizontal:
+          type: boolean
+          description: true = horizontal, false = vertical
+      required:
+        - shipCode
+        - start
+        - horizontal
+
+    StartGameRequest:
+      type: object
+      description: Parameters required to start a game.
+      properties:
+        gridSize:
+          type: integer
+          format: int32
+          description: Grid size (defaults to 10 when omitted).
+          example: 10
+        randomizePlayerShips:
+          type: boolean
+          description: >
+            true = the API places the player ships automatically,
+            false = the caller supplies placements via playerShips.
+        playerShips:
+          type: array
+          description: Ship placements when randomizePlayerShips is false.
+          items:
+            $ref: '#/components/schemas/ShipPlacement'
+      required:
+        - randomizePlayerShips
+
+    StartGameResponse:
+      type: object
+      description: Response payload when a game is created.
+      properties:
+        gameId:
+          type: string
+          format: uuid
+        initialState:
+          $ref: '#/components/schemas/GameState'
+      required:
+        - gameId
+        - initialState
+
+    # --- Attack ---
+
+    AttackRequest:
+      type: object
+      description: Player shot request.
+      properties:
+        gameId:
+          type: string
+          format: uuid
+          description: Must match the identifier in the route.
+        x:
+          type: integer
+          format: int32
+          minimum: 0
+        y:
+          type: integer
+          format: int32
+          minimum: 0
+      required:
+        - gameId
+        - x
+        - y
+
+    AttackResponse:
+      type: object
+      description: Result of both the player shot and the AI response.
+      properties:
+        gameId:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/GameStatus'
+        playerShot:
+          $ref: '#/components/schemas/Coordinates'
+        playerShotResult:
+          $ref: '#/components/schemas/ShotResult'
+        aiShot:
+          allOf:
+            - $ref: '#/components/schemas/Coordinates'
+          nullable: true
+        aiShotResult:
+          allOf:
+            - $ref: '#/components/schemas/ShotResult'
+          nullable: true
+        gameState:
+          $ref: '#/components/schemas/GameState'
+      required:
+        - gameId
+        - status
+        - playerShot
+        - playerShotResult
+        - gameState
+
+    # --- History & leaderboard ---
+
+    MoveHistoryEntry:
+      type: object
+      description: A single move in the match history.
+      properties:
+        moveNumber:
+          type: integer
+          format: int32
+        player:
+          $ref: '#/components/schemas/PlayerType'
+        target:
+          $ref: '#/components/schemas/Coordinates'
+        result:
+          $ref: '#/components/schemas/ShotResult'
+        playedAt:
+          type: string
+          format: date-time
+      required:
+        - moveNumber
+        - player
+        - target
+        - result
+        - playedAt
+
+    GameHistory:
+      type: object
+      description: Full list of moves for a game.
+      properties:
+        gameId:
+          type: string
+          format: uuid
+        moves:
+          type: array
+          items:
+            $ref: '#/components/schemas/MoveHistoryEntry'
+      required:
+        - gameId
+        - moves
+
+    LeaderboardEntry:
+      type: object
+      description: Aggregated stats for a player.
+      properties:
+        playerId:
+          type: string
+        gamesPlayed:
+          type: integer
+          format: int32
+        gamesWon:
+          type: integer
+          format: int32
+        gamesLost:
+          type: integer
+          format: int32
+        winRate:
+          type: number
+          format: double
+          description: Win ratio between 0 and 1.
+      required:
+        - playerId
+        - gamesPlayed
+        - gamesWon
+        - gamesLost
+        - winRate
+
+    Leaderboard:
+      type: object
+      description: List of leaderboard entries.
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/LeaderboardEntry'
+      required:
+        - entries
+
+    # --- Standard errors ---
+
+    ErrorDetail:
+      type: object
+      properties:
+        code:
+          type: string
+          description: Internal error identifier (e.g. ValidationError, GameNotFound).
+        field:
+          type: string
+          nullable: true
+          description: Field concerned when applicable (e.g. "x", "y", "gameId").
+        message:
+          type: string
+      required:
+        - code
+        - message
+
+    ErrorResponse:
+      type: object
+      description: Common format for errors.
+      properties:
+        message:
+          type: string
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/ErrorDetail'
+      required:
+        - message
+        - errors
