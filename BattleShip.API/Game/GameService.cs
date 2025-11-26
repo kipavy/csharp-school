@@ -60,8 +60,9 @@ public class GameService : IGameService
         ShotResult? aiResult = null;
         if (game.Status == GameStatus.InProgress)
         {
-            aiShot = DequeueAiMove(game);
-            aiResult = ApplyShot(game, PlayerType.AI, aiShot.Value);
+            var aiShotValue = DequeueAiMove(game);
+            aiShot = aiShotValue;
+            aiResult = ApplyShot(game, PlayerType.AI, aiShotValue);
             if (!HasRemainingShips(game.PlayerGrid)) FinalizeGame(game, GameStatus.AIWon);
         }
         var state = BuildState(game);
