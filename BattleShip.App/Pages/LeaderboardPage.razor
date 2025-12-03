@@ -1,0 +1,64 @@
+@page "/leaderboard"
+@inject GameApiClient ApiClient
+
+<PageTitle>Leaderboard</PageTitle>
+
+<h2>Leaderboard</h2>
+
+@if (errorMessage is not null)
+{
+    <p class="error-text">@errorMessage</p>
+}
+else if (entries is null)
+{
+    <p>Loading...</p>
+}
+else if (entries.Count == 0)
+{
+    <p>No data yet.</p>
+}
+else
+{
+    <table class="leaderboard">
+        <thead>
+            <tr>
+                <th>Player</th>
+                <th>Games</th>
+                <th>Wins</th>
+                <th>Losses</th>
+                <th>Win rate</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var entry in entries.OrderByDescending(e => e.WinRate))
+            {
+                <tr>
+                    <td>@entry.PlayerId</td>
+                    <td>@entry.GamesPlayed</td>
+                    <td>@entry.GamesWon</td>
+                    <td>@entry.GamesLost</td>
+                    <td>@(entry.WinRate.ToString("P0"))</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private List<LeaderboardEntryDto>? entries;
+    private string? errorMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var leaderboard = await ApiClient.GetLeaderboardAsync();
+            entries = leaderboard.Entries.ToList();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = ex.Message;
+        }
+    }
+}
+

@@ -1,0 +1,339 @@
+@page "/"
+@inject GameApiClient ApiClient
+@inject GameStateService GameState
+@inject GameHubClient HubClient
+@inject NavigationManager Navigation
+
+<PageTitle>BattleShip</PageTitle>
+
+<section class="hero">
+    <div>
+        <h2>Start a new game</h2>
+        <p>Configure the battlefield and pick your mode.</p>
+    </div>
+</section>
+
+<EditForm Model="form" OnValidSubmit="StartGameAsync">
+    <DataAnnotationsValidator />
+    <div class="form-grid">
+        <label>
+            Grid size
+            <InputNumber Value="form.GridSize"
+                         ValueChanged="@(EventCallback.Factory.Create<int>(this, OnGridSizeChanged))"
+                         ValueExpression="() => form.GridSize"
+                         min="6" max="14" />
+        </label>
+        <label class="checkbox">
+            <InputCheckbox @bind-Value="form.RandomizeShips" />
+            Randomize my fleet
+        </label>
+        <label class="checkbox">
+            <InputCheckbox @bind-Value="form.IsMultiplayer" />
+            Multiplayer mode
+        </label>
+        <label>
+            Difficulty
+            <InputSelect @bind-Value="form.Difficulty" disabled="@form.IsMultiplayer">
+                @foreach (var level in difficultyLevels)
+                {
+                    <option value="@level">@level</option>
+                }
+            </InputSelect>
+        </label>
+    </div>
+
+    @if (!form.RandomizeShips)
+    {
+        <div class="placement-editor">
+            <h3>Manual placement</h3>
+            <p>Select a ship, choose orientation, then place it on the grid.</p>
+            <div class="placement-controls">
+                <label class="checkbox">
+                    <InputCheckbox @bind-Value="horizontal" />
+                    Horizontal
+                </label>
+                <button type="button" @onclick="ClearAllPlacements">Reset placements</button>
+            </div>
+            <div class="ship-selector">
+                @foreach (var ship in shipDefinitions)
+                {
+                    <button type="button"
+                            class="@(selectedShip == ship.Code ? "selected" : string.Empty)"
+                            @onclick="() => SelectShip(ship.Code)">
+                        @ship.Code (@ship.Size)
+                    </button>
+                }
+            </div>
+            <div class="placement-grid">
+                @for (var y = 0; y < gridSizeValue; y++)
+                {
+                    var rowIndex = y;
+                    <div class="grid-row">
+                        @for (var x = 0; x < gridSizeValue; x++)
+                        {
+                            var colIndex = x;
+                            <button type="button"
+                                    class="grid-cell @(placementGrid[rowIndex][colIndex])"
+                                    @onclick="() => HandleCellClick(colIndex, rowIndex)">
+                                @if (!string.IsNullOrWhiteSpace(placementGrid[rowIndex][colIndex]))
+                                {
+                                    <img src="@($"images/ships/ship{placementGrid[rowIndex][colIndex]}.png")" alt="Ship" />
+                                }
+                            </button>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    }
+
+    <button disabled="@isBusy" type="submit">Start game</button>
+</EditForm>
+
+<section class="join-panel">
+    <h3>Join existing game</h3>
+    <div class="join-form">
+        <input placeholder="Game Id" @bind="existingGameId" />
+        <button type="button" @onclick="JoinExistingGameAsync" disabled="@isBusy">Join</button>
+    </div>
+    <label class="checkbox">
+        <InputCheckbox @bind-Value="joinAsMultiplayer" />
+        Subscribe with SignalR
+    </label>
+</section>
+
+@if (!string.IsNullOrWhiteSpace(errorMessage))
+{
+    <p class="error-text">@errorMessage</p>
+}
+
+@code {
+    private StartGameFormModel form = new();
+    private static readonly AiDifficulty[] difficultyLevels = System.Enum.GetValues<AiDifficulty>();
+    private readonly IReadOnlyList<ShipDefinition> shipDefinitions = ShipDefinitions.Default;
+    private readonly Dictionary<char, ShipPlacement> manualPlacements = new();
+    private string[][] placementGrid = Array.Empty<string[]>();
+    private bool horizontal = true;
+    private char selectedShip;
+    private int gridSizeValue = 10;
+    private bool isBusy;
+    private string? errorMessage;
+    private string? existingGameId;
+    private bool joinAsMultiplayer = true;
+
+    protected override void OnInitialized()
+    {
+        gridSizeValue = form.GridSize;
+        selectedShip = shipDefinitions.First().Code;
+        BuildGrid();
+    }
+
+    private Task OnGridSizeChanged(int value)
+    {
+        var sanitized = Math.Clamp(value, 6, 14);
+        form.GridSize = sanitized;
+
+        if (gridSizeValue == sanitized)
+        {
+            return Task.CompletedTask;
+        }
+
+        gridSizeValue = sanitized;
+        ClearAllPlacements();
+        return Task.CompletedTask;
+    }
+
+    private void BuildGrid()
+    {
+        placementGrid = Enumerable.Range(0, gridSizeValue)
+            .Select(_ => Enumerable.Repeat(string.Empty, gridSizeValue).ToArray())
+            .ToArray();
+
+        foreach (var placement in manualPlacements.Values)
+        {
+            ApplyPlacementToGrid(placement);
+        }
+    }
+
+    private void ApplyPlacementToGrid(ShipPlacement placement)
+    {
+        var size = shipDefinitions.First(s => s.Code == placement.ShipCode).Size;
+        for (var i = 0; i < size; i++)
+        {
+            var x = placement.Horizontal ? placement.Start.X + i : placement.Start.X;
+            var y = placement.Horizontal ? placement.Start.Y : placement.Start.Y + i;
+            if (y < placementGrid.Length && x < placementGrid[y].Length)
+            {
+                placementGrid[y][x] = placement.ShipCode.ToString();
+            }
+        }
+    }
+
+    private void SelectShip(char code)
+    {
+        selectedShip = code;
+    }
+
+    private void ClearAllPlacements()
+    {
+        errorMessage = null;
+        manualPlacements.Clear();
+        BuildGrid();
+    }
+
+    private void HandleCellClick(int x, int y)
+    {
+        if (form.RandomizeShips)
+        {
+            return;
+        }
+
+        errorMessage = null;
+        var definition = shipDefinitions.First(s => s.Code == selectedShip);
+
+        if (horizontal && x + definition.Size > gridSizeValue)
+        {
+            errorMessage = "Ship exceeds grid width.";
+            return;
+        }
+
+        if (!horizontal && y + definition.Size > gridSizeValue)
+        {
+            errorMessage = "Ship exceeds grid height.";
+            return;
+        }
+
+        if (manualPlacements.TryGetValue(selectedShip, out var existing))
+        {
+            RemovePlacement(existing);
+        }
+
+        for (var i = 0; i < definition.Size; i++)
+        {
+            var targetX = horizontal ? x + i : x;
+            var targetY = horizontal ? y : y + i;
+            if (!string.IsNullOrWhiteSpace(placementGrid[targetY][targetX]))
+            {
+                errorMessage = "Cells already occupied.";
+                if (existing is not null)
+                {
+                    ApplyPlacementToGrid(existing);
+                }
+
+                return;
+            }
+        }
+
+        var placement = new ShipPlacement(selectedShip, new Coordinates(x, y), horizontal);
+        manualPlacements[selectedShip] = placement;
+        ApplyPlacementToGrid(placement);
+    }
+
+    private void RemovePlacement(ShipPlacement placement)
+    {
+        var definition = shipDefinitions.First(s => s.Code == placement.ShipCode);
+        for (var i = 0; i < definition.Size; i++)
+        {
+            var x = placement.Horizontal ? placement.Start.X + i : placement.Start.X;
+            var y = placement.Horizontal ? placement.Start.Y : placement.Start.Y + i;
+            placementGrid[y][x] = string.Empty;
+        }
+    }
+
+    private async Task StartGameAsync()
+    {
+        if (isBusy)
+        {
+            return;
+        }
+
+        if (!form.RandomizeShips)
+        {
+            var missingShips = shipDefinitions.Where(s => !manualPlacements.ContainsKey(s.Code)).ToList();
+            if (missingShips.Count > 0)
+            {
+                errorMessage = $"Place all ships ({string.Join(", ", missingShips.Select(s => s.Code))}).";
+                return;
+            }
+        }
+
+        errorMessage = null;
+        isBusy = true;
+
+        try
+        {
+            IList<ShipPlacement>? manual = form.RandomizeShips ? null : manualPlacements.Values.ToList();
+            var request = new StartGameRequestDto(gridSizeValue, form.RandomizeShips, manual, form.IsMultiplayer, form.Difficulty);
+            var response = await ApiClient.StartGameAsync(request);
+            GameState.InitializeFromStart(response, form.IsMultiplayer);
+
+            if (form.IsMultiplayer)
+            {
+                await HubClient.JoinGameAsync(response.GameId);
+            }
+
+            Navigation.NavigateTo("/game");
+        }
+        catch (Exception ex)
+        {
+            errorMessage = ex.Message;
+            GameState.SetErrorMessage(ex.Message);
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private async Task JoinExistingGameAsync()
+    {
+        if (string.IsNullOrWhiteSpace(existingGameId))
+        {
+            return;
+        }
+
+        if (!Guid.TryParse(existingGameId, out var gameId))
+        {
+            errorMessage = "Invalid game identifier.";
+            return;
+        }
+
+        errorMessage = null;
+        isBusy = true;
+
+        try
+        {
+            var state = await ApiClient.GetStateAsync(gameId);
+            GameState.UpdateFromState(state);
+
+            if (joinAsMultiplayer)
+            {
+                await HubClient.JoinGameAsync(gameId);
+            }
+
+            Navigation.NavigateTo("/game");
+        }
+        catch (Exception ex)
+        {
+            errorMessage = ex.Message;
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private sealed class StartGameFormModel
+    {
+        [Range(6, 14)]
+        public int GridSize { get; set; } = 10;
+
+        public bool RandomizeShips { get; set; } = true;
+
+        public bool IsMultiplayer { get; set; }
+
+        public AiDifficulty Difficulty { get; set; } = AiDifficulty.Normal;
+    }
+
+}
+
