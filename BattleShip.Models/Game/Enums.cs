@@ -33,3 +33,10 @@ public enum PlayerSlot
     PlayerTwo
 }
 
+public enum AiDifficulty
+{
+    Easy,
+    Normal,
+    Hard
+}
+

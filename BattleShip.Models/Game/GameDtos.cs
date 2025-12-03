@@ -8,7 +8,7 @@ public record OpponentGridDto(CellShotState[][] Cells);
 
 public record GameStateDto(Guid GameId, GameStatus Status, int GridSize, PlayerGridDto PlayerGrid, OpponentGridDto OpponentGrid, bool IsMultiplayer, PlayerSlot Perspective, bool IsPlayerTurn);
 
-public record StartGameRequestDto(int? GridSize, bool RandomizePlayerShips, IList<ShipPlacement>? PlayerShips, bool IsMultiplayer);
+public record StartGameRequestDto(int? GridSize, bool RandomizePlayerShips, IList<ShipPlacement>? PlayerShips, bool IsMultiplayer, AiDifficulty Difficulty);
 
 public record StartGameResponseDto(Guid GameId, GameStateDto InitialState);
 

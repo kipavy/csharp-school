@@ -58,7 +58,6 @@ else
             if (GameState.IsMultiplayer)
             {
                 await HubClient.ShootAsync(GameState.GameId.Value, position.x, position.y);
-                GameState.SetStatusMessage($"Shot sent ({position.x},{position.y}).");
             }
             else
             {

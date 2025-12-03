@@ -34,8 +34,9 @@ public class GameService : IGameService
         PlaceShipsRandomly(aiGrid, definitions);
         var opponentView = new bool?[gridSize, gridSize];
         var playerTwoView = new bool?[gridSize, gridSize];
-        var queue = BuildAiQueue(gridSize);
-        var configuration = new GameConfiguration(gridSize, request.RandomizePlayerShips, request.RandomizePlayerShips ? null : playerPlacements.ToList(), request.IsMultiplayer);
+        var difficulty = request.IsMultiplayer ? AiDifficulty.Normal : request.Difficulty;
+        var queue = BuildAiQueue(gridSize, difficulty);
+        var configuration = new GameConfiguration(gridSize, request.RandomizePlayerShips, request.RandomizePlayerShips ? null : playerPlacements.ToList(), request.IsMultiplayer, difficulty);
         var game = new Models.Game.Game
         {
             GridSize = gridSize,
@@ -46,7 +47,8 @@ public class GameService : IGameService
             AiMovesQueue = queue,
             Configuration = configuration,
             IsMultiplayer = request.IsMultiplayer,
-            CurrentTurn = PlayerSlot.PlayerOne
+            CurrentTurn = PlayerSlot.PlayerOne,
+            Difficulty = difficulty
         };
         _games[game.Id] = game;
         return game;
@@ -69,6 +71,10 @@ public class GameService : IGameService
             aiShot = aiShotValue;
             aiResult = ApplyShot(game, PlayerType.AI, aiShotValue);
             if (!HasRemainingShips(game.PlayerGrid)) FinalizeGame(game, GameStatus.AIWon);
+            if (aiResult.HasValue)
+            {
+                HandleAiShotResult(game, aiShotValue, aiResult.Value);
+            }
         }
         var state = BuildState(game);
         return new AttackResponseDto(game.Id, game.Status, playerShot, playerResult, aiShot, aiResult, state, PlayerSlot.PlayerOne);
@@ -123,7 +129,12 @@ public class GameService : IGameService
         var game = GetGame(gameId);
         var config = game.Configuration;
         _games.TryRemove(gameId, out _);
-        var request = new StartGameRequestDto(config.GridSize, config.RandomizePlayerShips, config.RandomizePlayerShips ? null : config.PlayerShips?.Select(p => new ShipPlacement(p.ShipCode, new Coordinates(p.Start.X, p.Start.Y), p.Horizontal)).ToList(), config.IsMultiplayer);
+        var request = new StartGameRequestDto(
+            config.GridSize,
+            config.RandomizePlayerShips,
+            config.RandomizePlayerShips ? null : config.PlayerShips?.Select(p => new ShipPlacement(p.ShipCode, new Coordinates(p.Start.X, p.Start.Y), p.Horizontal)).ToList(),
+            config.IsMultiplayer,
+            config.Difficulty);
         var newGame = StartNewGame(request);
         return BuildState(newGame);
     }
@@ -260,7 +271,16 @@ public class GameService : IGameService
 
     private static char[,] CreateGrid(int size) => new char[size, size];
 
-    private static Queue<Coordinates> BuildAiQueue(int gridSize)
+    private static Queue<Coordinates> BuildAiQueue(int gridSize, AiDifficulty difficulty)
+    {
+        return difficulty switch
+        {
+            AiDifficulty.Easy => BuildRandomQueue(gridSize),
+            _ => BuildCheckerboardQueue(gridSize)
+        };
+    }
+
+    private static Queue<Coordinates> BuildRandomQueue(int gridSize)
     {
         var coords = new List<Coordinates>(gridSize * gridSize);
         for (var y = 0; y < gridSize; y++)
@@ -269,6 +289,31 @@ public class GameService : IGameService
         }
         Shuffle(coords);
         return new Queue<Coordinates>(coords);
+    }
+
+    private static Queue<Coordinates> BuildCheckerboardQueue(int gridSize)
+    {
+        var primary = new List<Coordinates>();
+        var secondary = new List<Coordinates>();
+        for (var y = 0; y < gridSize; y++)
+        {
+            for (var x = 0; x < gridSize; x++)
+            {
+                var coordinate = new Coordinates(x, y);
+                if ((x + y) % 2 == 0)
+                {
+                    primary.Add(coordinate);
+                }
+                else
+                {
+                    secondary.Add(coordinate);
+                }
+            }
+        }
+        Shuffle(primary);
+        Shuffle(secondary);
+        primary.AddRange(secondary);
+        return new Queue<Coordinates>(primary);
     }
 
     private static void Shuffle(IList<Coordinates> items)
@@ -413,8 +458,207 @@ public class GameService : IGameService
 
     private static Coordinates DequeueAiMove(Models.Game.Game game)
     {
-        if (game.AiMovesQueue.Count == 0) throw new InvalidOperationException("AI cannot play any remaining moves.");
-        return game.AiMovesQueue.Dequeue();
+        var usePriority = game.Difficulty >= AiDifficulty.Normal;
+        if (usePriority && TryDequeuePriorityTarget(game, out var priorityMove))
+        {
+            return priorityMove;
+        }
+
+        while (game.AiMovesQueue.Count > 0)
+        {
+            var candidate = game.AiMovesQueue.Dequeue();
+            if (IsCellAvailableForAi(game, candidate))
+            {
+                return candidate;
+            }
+        }
+
+        throw new InvalidOperationException("AI cannot play any remaining moves.");
+    }
+
+    private static bool TryDequeuePriorityTarget(Models.Game.Game game, out Coordinates move)
+    {
+        while (game.AiPriorityTargets.Count > 0)
+        {
+            var candidate = game.AiPriorityTargets.Dequeue();
+            if (IsCellAvailableForAi(game, candidate))
+            {
+                move = candidate;
+                return true;
+            }
+        }
+
+        ResetHuntState(game);
+        move = default;
+        return false;
+    }
+
+    private static bool IsCellAvailableForAi(Models.Game.Game game, Coordinates coordinates)
+    {
+        if (coordinates.X < 0 || coordinates.Y < 0 || coordinates.X >= game.GridSize || coordinates.Y >= game.GridSize)
+        {
+            return false;
+        }
+
+        var cell = game.PlayerGrid[coordinates.Y, coordinates.X];
+        return cell != 'X' && cell != 'O';
+    }
+
+    private static void HandleAiShotResult(Models.Game.Game game, Coordinates shot, ShotResult result)
+    {
+        if (game.Difficulty < AiDifficulty.Normal)
+        {
+            return;
+        }
+
+        if (result == ShotResult.Hit)
+        {
+            RegisterAiHit(game, shot);
+        }
+        else
+        {
+            RegisterAiMiss(game);
+        }
+    }
+
+    private static void RegisterAiHit(Models.Game.Game game, Coordinates hit)
+    {
+        if (game.Difficulty == AiDifficulty.Normal)
+        {
+            EnqueueRandomAdjacents(game, hit);
+            return;
+        }
+
+        if (game.Difficulty < AiDifficulty.Hard)
+        {
+            return;
+        }
+
+        if (game.HuntOrigin is null)
+        {
+            game.HuntOrigin = hit;
+            game.HuntDirection = null;
+            game.HuntReverseQueued = false;
+            EnqueueRandomAdjacents(game, hit);
+            return;
+        }
+
+        if (game.HuntDirection is null)
+        {
+            var origin = game.HuntOrigin!;
+            if (!IsAdjacent(origin, hit))
+            {
+                game.HuntOrigin = hit;
+                game.HuntDirection = null;
+                game.HuntReverseQueued = false;
+                EnqueueRandomAdjacents(game, hit);
+                return;
+            }
+
+            var dx = Math.Sign(hit.X - origin.X);
+            var dy = Math.Sign(hit.Y - origin.Y);
+            if ((dx == 0 && dy == 0) || (dx != 0 && dy != 0))
+            {
+                EnqueueRandomAdjacents(game, hit);
+                return;
+            }
+
+            game.HuntDirection = new Coordinates(dx, dy);
+            EnqueueLineTargets(game, hit, dx, dy);
+            return;
+        }
+
+        var direction = game.HuntDirection!;
+        EnqueueLineTargets(game, hit, direction.X, direction.Y);
+    }
+
+    private static void RegisterAiMiss(Models.Game.Game game)
+    {
+        if (game.Difficulty < AiDifficulty.Normal)
+        {
+            return;
+        }
+
+        if (game.Difficulty >= AiDifficulty.Hard &&
+            game.HuntDirection is Coordinates direction &&
+            !game.HuntReverseQueued &&
+            game.HuntOrigin is Coordinates origin)
+        {
+            EnqueueLineTargets(game, origin, -direction.X, -direction.Y);
+            game.HuntReverseQueued = true;
+        }
+
+        if (game.AiPriorityTargets.Count == 0)
+        {
+            ResetHuntState(game);
+        }
+    }
+
+    private static void EnqueueRandomAdjacents(Models.Game.Game game, Coordinates center)
+    {
+        var offsets = new List<(int dx, int dy)>
+        {
+            (1, 0),
+            (-1, 0),
+            (0, 1),
+            (0, -1)
+        };
+
+        for (var i = offsets.Count - 1; i > 0; i--)
+        {
+            var j = Random.Shared.Next(i + 1);
+            (offsets[i], offsets[j]) = (offsets[j], offsets[i]);
+        }
+
+        foreach (var (dx, dy) in offsets)
+        {
+            var target = new Coordinates(center.X + dx, center.Y + dy);
+            EnqueuePriorityTarget(game, target);
+        }
+    }
+
+    private static void EnqueueLineTargets(Models.Game.Game game, Coordinates start, int dx, int dy)
+    {
+        if (dx == 0 && dy == 0)
+        {
+            return;
+        }
+
+        var next = new Coordinates(start.X + dx, start.Y + dy);
+        while (IsCellAvailableForAi(game, next))
+        {
+            EnqueuePriorityTarget(game, next);
+            next = new Coordinates(next.X + dx, next.Y + dy);
+        }
+    }
+
+    private static void EnqueuePriorityTarget(Models.Game.Game game, Coordinates target)
+    {
+        if (!IsCellAvailableForAi(game, target))
+        {
+            return;
+        }
+
+        if (game.AiPriorityTargets.Contains(target))
+        {
+            return;
+        }
+
+        game.AiPriorityTargets.Enqueue(target);
+    }
+
+    private static bool IsAdjacent(Coordinates origin, Coordinates other)
+    {
+        var dx = Math.Abs(origin.X - other.X);
+        var dy = Math.Abs(origin.Y - other.Y);
+        return dx + dy == 1;
+    }
+
+    private static void ResetHuntState(Models.Game.Game game)
+    {
+        game.HuntOrigin = null;
+        game.HuntDirection = null;
+        game.HuntReverseQueued = false;
     }
 
     private static bool HasRemainingShips(char[,] grid)

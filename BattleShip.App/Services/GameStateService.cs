@@ -18,6 +18,11 @@ public class GameStateService
     public PlayerSlot PlayerRole { get; private set; } = PlayerSlot.PlayerOne;
     public string? LastMessage { get; private set; }
     public string? ErrorMessage { get; private set; }
+    public bool IsWaitingForOpponent =>
+        IsMultiplayer &&
+        Status == GameStatus.InProgress &&
+        PlayerRole == PlayerSlot.PlayerOne &&
+        !HasOpponentConnected();
     public event Action? StateChanged;
 
     public void InitializeFromStart(StartGameResponseDto response, bool isMultiplayer)
@@ -30,6 +35,7 @@ public class GameStateService
         PlayerRole = response.InitialState.Perspective;
         LastMessage = null;
         ErrorMessage = null;
+        UpdateMessageFromState();
         NotifyStateChanged();
     }
 
@@ -49,29 +55,20 @@ public class GameStateService
         LastAiShot = isMultiplayer ? null : response.AiShot;
         LastAiShotResult = isMultiplayer ? null : response.AiShotResult;
         AppendMoves(response);
-        LastMessage = BuildMessage(response);
-        if (response.Status != GameStatus.InProgress)
-        {
-            LastMessage = response.Status.ToString();
-        }
+        UpdateMessageFromState(response.Status);
         NotifyStateChanged();
     }
 
     public void UpdateFromState(GameStateDto state)
     {
         ApplyState(state);
+        UpdateMessageFromState();
         NotifyStateChanged();
     }
 
     public void SetHistory(GameHistoryDto history)
     {
         Moves = history.Moves?.ToList() ?? new List<MoveHistoryEntry>();
-        NotifyStateChanged();
-    }
-
-    public void SetStatusMessage(string? message)
-    {
-        LastMessage = message;
         NotifyStateChanged();
     }
 
@@ -91,6 +88,7 @@ public class GameStateService
         IsMultiplayer = state.IsMultiplayer;
         PlayerRole = state.Perspective;
         IsPlayerTurn = state.IsPlayerTurn;
+        LogDebug($"ApplyState: status={Status}, isMultiplayer={IsMultiplayer}, perspective={PlayerRole}, isPlayerTurn={IsPlayerTurn}");
     }
 
     private static string[][] ClonePlayerGrid(string[][]? source)
@@ -153,6 +151,7 @@ public class GameStateService
                 PlayedAt = DateTime.UtcNow
             });
             Moves = updatedMoves;
+            LogDebug($"AppendMoves multiplayer: moves={Moves.Count}, acting={response.ActingPlayer}, result={response.PlayerShotResult}");
             return;
         }
 
@@ -180,23 +179,94 @@ public class GameStateService
         }
 
         Moves = updatedMoves;
+        LogDebug($"AppendMoves solo: moves={Moves.Count}, lastResult={response.PlayerShotResult}");
     }
 
-    private string BuildMessage(AttackResponseDto response)
+    private void UpdateMessageFromState(GameStatus? overrideStatus = null)
     {
-        var isMultiplayer = response.GameState?.IsMultiplayer == true;
-        if (!isMultiplayer)
+        var status = overrideStatus ?? Status;
+        if (!IsMultiplayer)
         {
-            var playerMessage = $"Player shot: ({response.PlayerShot.X},{response.PlayerShot.Y}) {response.PlayerShotResult}";
-            var aiMessage = response.AiShot is Coordinates aiShot
-                ? $"AI shot: ({aiShot.X},{aiShot.Y}) {response.AiShotResult?.ToString() ?? "Miss"}"
-                : "AI did not play.";
-            return $"{playerMessage} | {aiMessage}";
+            if (status != GameStatus.InProgress)
+            {
+                LastMessage = BuildOutcomeMessage(status);
+                LogDebug($"UpdateMessageFromState solo finished: status={status}, message={LastMessage}");
+                return;
+            }
+
+            LastMessage = IsPlayerTurn ? "Your turn" : "Opponent turn";
+            LogDebug($"UpdateMessageFromState solo in-progress: isPlayerTurn={IsPlayerTurn}, message={LastMessage}");
+            return;
         }
 
-        var actorIsLocal = response.ActingPlayer == PlayerRole;
-        var actorLabel = actorIsLocal ? "You" : "Opponent";
-        return $"{actorLabel} shot: ({response.PlayerShot.X},{response.PlayerShot.Y}) {response.PlayerShotResult}";
+        if (status != GameStatus.InProgress)
+        {
+            LastMessage = status switch
+            {
+                GameStatus.PlayerWon => "Player One",
+                GameStatus.AIWon => "Player Two",
+                _ => string.Empty
+            };
+            LogDebug($"UpdateMessageFromState multi finished: status={status}, message={LastMessage}");
+            return;
+        }
+
+        LastMessage = IsWaitingForOpponent ? "Waiting for opponent..." : string.Empty;
+        LogDebug($"UpdateMessageFromState multi in-progress: waiting={IsWaitingForOpponent}, message={LastMessage}");
+    }
+
+    private string BuildOutcomeMessage(GameStatus status)
+    {
+        if (!IsMultiplayer)
+        {
+            return status switch
+            {
+                GameStatus.PlayerWon => "You won!",
+                GameStatus.AIWon => "AI won.",
+                _ => status.ToString()
+            };
+        }
+
+        var localWins = status switch
+        {
+            GameStatus.PlayerWon => PlayerRole == PlayerSlot.PlayerOne,
+            GameStatus.AIWon => PlayerRole == PlayerSlot.PlayerTwo,
+            _ => false
+        };
+
+        return status switch
+        {
+            GameStatus.PlayerWon or GameStatus.AIWon => localWins ? "You won!" : "Opponent won.",
+            _ => status.ToString()
+        };
+    }
+
+    private bool HasOpponentConnected()
+    {
+        if (!IsMultiplayer)
+        {
+            return true;
+        }
+
+        if (PlayerRole == PlayerSlot.PlayerTwo)
+        {
+            LogDebug("HasOpponentConnected: role=PlayerTwo, returning true");
+            return true;
+        }
+
+        if (Moves.Count > 0)
+        {
+            LogDebug($"HasOpponentConnected: moves>0 ({Moves.Count}), returning true");
+            return true;
+        }
+
+        LogDebug($"HasOpponentConnected: isPlayerTurn={IsPlayerTurn}");
+        return IsPlayerTurn;
+    }
+
+    private void LogDebug(string message)
+    {
+        Console.WriteLine($"{DateTime.UtcNow:O} [GameStateService] {message}");
     }
 }
 

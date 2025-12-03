@@ -21,7 +21,7 @@
             <dt>Role</dt>
             <dd>@(GameState.PlayerRole == PlayerSlot.PlayerOne ? "Player One" : "Player Two")</dd>
             <dt>Turn</dt>
-            <dd>@(GameState.IsPlayerTurn ? "Your turn" : "Opponent turn")</dd>
+            <dd>@GetTurnLabel()</dd>
         }
     </dl>
 
@@ -35,4 +35,15 @@
         <p class="error-text">@GameState.ErrorMessage</p>
     }
 </section>
+@code {
+    private string GetTurnLabel()
+    {
+        Console.WriteLine($"{DateTime.UtcNow:O} [GameStatusPanel] waiting={GameState.IsWaitingForOpponent}, isPlayerTurn={GameState.IsPlayerTurn}, role={GameState.PlayerRole}, status={GameState.Status}");
+        if (GameState.IsMultiplayer && GameState.IsWaitingForOpponent)
+        {
+            return "Waiting for opponent...";
+        }
 
+        return GameState.IsPlayerTurn ? "Your turn" : "Opponent turn";
+    }
+}

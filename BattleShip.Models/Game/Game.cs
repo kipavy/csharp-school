@@ -20,6 +20,11 @@ public class Game
     public bool IsMultiplayer { get; set; }
     public PlayerSlot CurrentTurn { get; set; } = PlayerSlot.PlayerOne;
     public Dictionary<PlayerSlot, string> PlayerConnections { get; } = new();
+    public AiDifficulty Difficulty { get; init; } = AiDifficulty.Easy;
+    public Queue<Coordinates> AiPriorityTargets { get; } = new();
+    public Coordinates? HuntOrigin { get; set; }
+    public Coordinates? HuntDirection { get; set; }
+    public bool HuntReverseQueued { get; set; }
 }
 
 public class MoveHistoryEntry
@@ -34,5 +39,5 @@ public class MoveHistoryEntry
 
 public record GridSnapshot(PlayerType Player, Coordinates Target, char PreviousValue, bool TargetsAiGrid);
 
-public record GameConfiguration(int GridSize, bool RandomizePlayerShips, IReadOnlyList<ShipPlacement>? PlayerShips, bool IsMultiplayer);
+public record GameConfiguration(int GridSize, bool RandomizePlayerShips, IReadOnlyList<ShipPlacement>? PlayerShips, bool IsMultiplayer, AiDifficulty Difficulty);
 
