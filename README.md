@@ -2,6 +2,10 @@
 
 Projet ASP.NET/Blazor pour jouer à la bataille navale contre l’IA ou en multijoueur.
 
+Remy LOURON
+Killian PAVY
+Clément TRENS
+
 ## Prérequis
 
 - .NET 8 SDK
@@ -49,5 +53,7 @@ dotnet dev-certs https --trust
 ```
 
 Accepter la boîte de dialogue Windows pour approuver le certificat, puis relancer `dotnet run` côté API et client.
+
+Si ça ne fonctionne pas, essayez d'aller sur https://localhost:7096 dans le navigateur, puis approuvez le certificat via l'interface du navigateur.
 
 
